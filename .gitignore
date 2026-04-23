@@ -1,1 +1,4 @@
-./img/*
+# Ignore everything inside the img folder
+img/*
+# ...except the .gitkeep file
+!img/.gitkeep
