@@ -6,7 +6,6 @@
 #include <omp.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 
 // #define ENABLE_LOGS
 #ifdef ENABLE_LOGS
@@ -35,24 +34,8 @@ void process_image_parallel(const char *input_file, int thread_count) {
 
   LOG("Processing image: %s\n", input_file);
 
-  // Limpiar el nombre del archivo de entrada
-  const char *base_name = input_file;
-  const char *slash     = strrchr(input_file, '/');
-  if (slash) {
-    base_name = slash + 1;
-  }
-
-  size_t      base_len = strlen(base_name);
-  const char *dot      = strrchr(base_name, '.');
-  if (dot && dot != base_name) {
-    base_len = (size_t)(dot - base_name);
-  }
-
-  char input_base[128];
-  snprintf(input_base, sizeof(input_base), "%.*s", (int)base_len, base_name);
-
 #pragma omp parallel sections num_threads(thread_count) default(none)          \
-  shared(input_file, input_base, bmp)
+  shared(input_file, bmp)
   {
     // Funcion que hace solamente gris la imagen
     // #pragma omp section
@@ -65,53 +48,38 @@ void process_image_parallel(const char *input_file, int thread_count) {
 
 #pragma omp section
     {
-      char output_name[128];
-      snprintf(output_name, sizeof(output_name), "%s_desenfoque", input_base);
       LOG("Applying blur filter...\n");
-      desenfoque(input_file, output_name, 16, &bmp);
+      desenfoque(input_file, "desenfoque", 16, &bmp);
     }
 
 #pragma omp section
     {
-      char output_name[128];
-      snprintf(
-        output_name, sizeof(output_name), "%s_desenfoque_gris", input_base);
       LOG("Applying gray blur filter...\n");
-      desenfoque_gris(input_file, output_name, 16, &bmp);
+      desenfoque_gris(input_file, "desenfoque_gris", 16, &bmp);
     }
 
 #pragma omp section
     {
-      char output_name[128];
-      snprintf(output_name, sizeof(output_name), "%s_inverted", input_base);
       LOG("Applying inverting image...\n");
-      inv_hz_color(input_file, output_name, &bmp);
+      inv_hz_color(input_file, "inverted", &bmp);
     }
 
 #pragma omp section
     {
-      char output_name[128];
-      snprintf(
-        output_name, sizeof(output_name), "%s_inverted_gris", input_base);
       LOG("Applying inverting image gray...\n");
-      inv_hz_gris(input_file, output_name, &bmp);
+      inv_hz_gris(input_file, "inverted_gris", &bmp);
     }
 
 #pragma omp section
     {
-      char output_name[128];
-      snprintf(output_name, sizeof(output_name), "%s_inverted_vt", input_base);
       LOG("Applying inverting vertically image...\n");
-      inv_vt_color(input_file, output_name, &bmp);
+      inv_vt_color(input_file, "inverted_vt", &bmp);
     }
 
 #pragma omp section
     {
-      char output_name[128];
-      snprintf(
-        output_name, sizeof(output_name), "%s_inverted_gris_vt", input_base);
       LOG("Applying inverting vertically image gray...\n");
-      inv_vt_gris(input_file, output_name, &bmp);
+      inv_vt_gris(input_file, "inverted_gris_vt", &bmp);
     }
   }
 

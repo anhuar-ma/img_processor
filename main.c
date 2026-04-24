@@ -28,37 +28,35 @@ int main() {
 
   // Aplicar filtro de escala de grises
   printf("Applying grayscale filter...\n");
-  gris(input_file, "img_gris.bmp", &bmp);
+  gris(input_file, "gris", &bmp);
 
   // Aplicar filtro de desenfoque
   printf("Applying blur filter...\n");
-  desenfoque(input_file, "img_desenfoque", 16, &bmp);
+  desenfoque(input_file, "desenfoque", 16, &bmp);
 
   // Aplicar filtro de desenfoque en gris
   printf("Applying gray blur filter...\n");
-  desenfoque_gris(input_file, "img_desenfoque_gris", 16, &bmp);
+  desenfoque_gris(input_file, "desenfoque_gris", 16, &bmp);
 
 
   printf("Applying inverting image...\n");
-  inv_hz_color(input_file, "img_inverted", &bmp);
+  inv_hz_color(input_file, "inverted", &bmp);
 
 
   printf("Applying inverting image gray...\n");
-  inv_hz_gris(input_file, "img_inverted_gris", &bmp);
+  inv_hz_gris(input_file, "inverted_gris", &bmp);
 
   printf("Applying inverting vertically  image...\n");
-  inv_vt_color(input_file, "img_inverted_vt", &bmp);
+  inv_vt_color(input_file, "inverted_vt", &bmp);
 
 
   printf("Applying inverting vertially image gray...\n");
-  inv_vt_gris(input_file, "img_inverted_gris_vt", &bmp);
+  inv_vt_gris(input_file, "inverted_gris_vt", &bmp);
 
   bmp_free_info(&bmp);
 
   printf("Processing complete!\n");
-  printf("Output files created:\n");
-  printf("  - img_gris.bmp\n");
-  printf("  - ./img/img_desenfoque.bmp\n");
+  printf("Output files created in ./img/ using input base name + suffix.\n");
 
   return 0;
 }

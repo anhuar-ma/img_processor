@@ -7,11 +7,15 @@
 #include <string.h>
 
 void desenfoque_gris(const char           *input_path,
-                     const char           *name_output,
+                     const char           *output_suffix,
                      int                   kernel_size,
                      const bmp_image_info *bmp) {
+  char output_name[256];
+  bmp_build_output_name(
+    input_path, output_suffix, output_name, sizeof(output_name));
+
   bmp_process_io io;
-  if (!bmp_open_process_io(input_path, name_output, bmp, &io)) {
+  if (!bmp_open_process_io(input_path, output_name, bmp, &io)) {
     return;
   }
 
@@ -179,11 +183,15 @@ void desenfoque_gris(const char           *input_path,
 
 
 void desenfoque(const char           *input_path,
-                const char           *name_output,
+                const char           *output_suffix,
                 int                   kernel_size,
                 const bmp_image_info *bmp) {
+  char output_name[256];
+  bmp_build_output_name(
+    input_path, output_suffix, output_name, sizeof(output_name));
+
   bmp_process_io io;
-  if (!bmp_open_process_io(input_path, name_output, bmp, &io)) {
+  if (!bmp_open_process_io(input_path, output_name, bmp, &io)) {
     return;
   }
 

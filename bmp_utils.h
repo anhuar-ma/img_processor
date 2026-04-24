@@ -24,6 +24,39 @@ typedef struct {
   char  output_path[256];
 } bmp_process_io;
 
+static inline void bmp_build_output_name(const char *input_path,
+                                         const char *suffix,
+                                         char       *output_name,
+                                         size_t      output_name_size) {
+  if (!input_path || !output_name || output_name_size == 0) {
+    return;
+  }
+
+  const char *base_name = input_path;
+  const char *slash     = strrchr(input_path, '/');
+  if (slash) {
+    base_name = slash + 1;
+  }
+
+  size_t      base_len = strlen(base_name);
+  const char *dot      = strrchr(base_name, '.');
+  if (dot && dot != base_name) {
+    base_len = (size_t)(dot - base_name);
+  }
+
+  if (suffix && suffix[0] != '\0') {
+    snprintf(output_name,
+             output_name_size,
+             "%.*s_%s",
+             (int)base_len,
+             base_name,
+             suffix);
+    return;
+  }
+
+  snprintf(output_name, output_name_size, "%.*s", (int)base_len, base_name);
+}
+
 static inline int bmp_read_info(FILE *image, bmp_image_info *info) {
   if (!image || !info) {
     return 0;

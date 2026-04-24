@@ -6,10 +6,14 @@
 #include <stdlib.h>
 
 static inline void gris(const char           *input_path,
-                        const char           *output_path,
+                        const char           *output_suffix,
                         const bmp_image_info *bmp) {
+  char output_name[256];
+  bmp_build_output_name(
+    input_path, output_suffix, output_name, sizeof(output_name));
+
   bmp_process_io io;
-  if (!bmp_open_process_io(input_path, output_path, bmp, &io)) {
+  if (!bmp_open_process_io(input_path, output_name, bmp, &io)) {
     return;
   }
 
