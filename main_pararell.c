@@ -16,26 +16,55 @@
     } while (0)
 #endif
 
-void process_image_parallel(const char *input_file, int thread_count) {
+static int load_bmp_info(const char *input_file, bmp_image_info *bmp) {
   FILE *image = fopen(input_file, "rb");
-
   if (!image) {
     LOG("Error: No se pudo abrir la imagen original.\n");
-    return;
+    return 0;
   }
 
-  bmp_image_info bmp;
-  if (!bmp_read_info(image, &bmp)) {
+  if (!bmp_read_info(image, bmp)) {
     LOG("Error: encabezado BMP invalido o incompleto.\n");
     fclose(image);
-    return;
+    return 0;
   }
+
   fclose(image);
+  return 1;
+}
 
-  LOG("Processing image: %s\n", input_file);
 
-#pragma omp parallel sections num_threads(thread_count) default(none)          \
-  shared(input_file, bmp)
+int main() {
+
+
+  // Habilitar el paralelismo anidado para que los hilos de main puedan crear
+  // sus propios hilos. Nota: según tu versión de OpenMP, podrías usar
+  // omp_set_nested(1);
+
+  const int thread_count = 2;
+
+
+  const char *img1 = "sample1.bmp";
+  const char *img2 = "sample2.bmp";
+  const char *img3 = "sample3.bmp";
+
+  bmp_image_info bmp1;
+  bmp_image_info bmp2;
+  bmp_image_info bmp3;
+
+  if (!load_bmp_info(img1, &bmp1) || !load_bmp_info(img2, &bmp2)
+      || !load_bmp_info(img3, &bmp3)) {
+    bmp_free_info(&bmp1);
+    bmp_free_info(&bmp2);
+    bmp_free_info(&bmp3);
+    return 1;
+  }
+
+  omp_set_num_threads(thread_count);
+  const double START = omp_get_wtime();
+
+
+#pragma omp parallel sections
   {
     // Funcion que hace solamente gris la imagen
     // #pragma omp section
@@ -46,99 +75,134 @@ void process_image_parallel(const char *input_file, int thread_count) {
     //       gris(input_file, output_name, &bmp);
     //     }
 
+    // --------IMG1----------------
 #pragma omp section
     {
       LOG("Applying blur filter...\n");
-      desenfoque(input_file, "desenfoque", 16, &bmp);
+      desenfoque(img1, "desenfoque", 16, &bmp1);
     }
 
 #pragma omp section
     {
       LOG("Applying gray blur filter...\n");
-      desenfoque_gris(input_file, "desenfoque_gris", 16, &bmp);
+      desenfoque_gris(img1, "desenfoque_gris", 16, &bmp1);
     }
 
 #pragma omp section
     {
       LOG("Applying inverting image...\n");
-      inv_hz_color(input_file, "inverted", &bmp);
+      inv_hz_color(img1, "inverted", &bmp1);
     }
 
 #pragma omp section
     {
       LOG("Applying inverting image gray...\n");
-      inv_hz_gris(input_file, "inverted_gris", &bmp);
+      inv_hz_gris(img1, "inverted_gris", &bmp1);
     }
 
 #pragma omp section
     {
       LOG("Applying inverting vertically image...\n");
-      inv_vt_color(input_file, "inverted_vt", &bmp);
+      inv_vt_color(img1, "inverted_vt", &bmp1);
     }
 
 #pragma omp section
     {
       LOG("Applying inverting vertically image gray...\n");
-      inv_vt_gris(input_file, "inverted_gris_vt", &bmp);
+      inv_vt_gris(img1, "inverted_gris_vt", &bmp1);
+    }
+
+
+    // --------IMG2----------------
+
+#pragma omp section
+    {
+      LOG("Applying blur filter...\n");
+      desenfoque(img2, "desenfoque", 16, &bmp2);
+    }
+
+#pragma omp section
+    {
+      LOG("Applying gray blur filter...\n");
+      desenfoque_gris(img2, "desenfoque_gris", 16, &bmp2);
+    }
+
+#pragma omp section
+    {
+      LOG("Applying inverting image...\n");
+      inv_hz_color(img2, "inverted", &bmp2);
+    }
+
+#pragma omp section
+    {
+      LOG("Applying inverting image gray...\n");
+      inv_hz_gris(img2, "inverted_gris", &bmp2);
+    }
+
+#pragma omp section
+    {
+      LOG("Applying inverting vertically image...\n");
+      inv_vt_color(img2, "inverted_vt", &bmp2);
+    }
+
+#pragma omp section
+    {
+      LOG("Applying inverting vertically image gray...\n");
+      inv_vt_gris(img2, "inverted_gris_vt", &bmp2);
+    }
+
+
+    // --------IMG3----------------
+
+#pragma omp section
+    {
+      LOG("Applying blur filter...\n");
+      desenfoque(img3, "desenfoque", 16, &bmp3);
+    }
+
+#pragma omp section
+    {
+      LOG("Applying gray blur filter...\n");
+      desenfoque_gris(img3, "desenfoque_gris", 16, &bmp3);
+    }
+
+#pragma omp section
+    {
+      LOG("Applying inverting image...\n");
+      inv_hz_color(img3, "inverted", &bmp3);
+    }
+
+#pragma omp section
+    {
+      LOG("Applying inverting image gray...\n");
+      inv_hz_gris(img3, "inverted_gris", &bmp3);
+    }
+
+#pragma omp section
+    {
+      LOG("Applying inverting vertically image...\n");
+      inv_vt_color(img3, "inverted_vt", &bmp3);
+    }
+
+#pragma omp section
+    {
+      LOG("Applying inverting vertically image gray...\n");
+      inv_vt_gris(img3, "inverted_gris_vt", &bmp3);
     }
   }
 
-  bmp_free_info(&bmp);
+
+  bmp_free_info(&bmp1);
+  bmp_free_info(&bmp2);
+  bmp_free_info(&bmp3);
 
   LOG("Processing complete!\n");
   LOG("Output files created in ./img/ using input base name + suffix.\n");
-}
 
-// int main() {
-//   int thread_count = 18;
-
-//   process_image_parallel("sample1.bmp", thread_count);
-
-//   process_image_parallel("sample2.bmp", thread_count);
-
-//   process_image_parallel("sample3.bmp", thread_count);
-
-//   return 0;
-// }
-
-
-int main() {
-
-  const double START = omp_get_wtime();
-
-  // Habilitar el paralelismo anidado para que los hilos de main puedan crear
-  // sus propios hilos. Nota: según tu versión de OpenMP, podrías usar
-  omp_set_max_active_levels(2);
-  // omp_set_nested(1);
-
-  // Distribuir hilos: 2 hilos por imagen x 3 imágenes = 6 hilos activos
-  int inner_thread_count = 6;
-
-// Envolver las secciones en un bloque paralelo.
-// Especificamos num_threads(3) porque hay 3 secciones (archivos) para
-// procesar.
-#pragma omp parallel sections num_threads(3) default(none)                     \
-  shared(inner_thread_count)
-  {
-#pragma omp section
-    {
-      process_image_parallel("sample1.bmp", inner_thread_count);
-    }
-
-#pragma omp section
-    {
-      process_image_parallel("sample2.bmp", inner_thread_count);
-    }
-
-#pragma omp section
-    {
-      process_image_parallel("sample3.bmp", inner_thread_count);
-    }
-  }
 
   const double STOP = omp_get_wtime();
 
-  printf("Threads = %d \n", (inner_thread_count * 3));
+  printf("Threads = %d \n", (thread_count));
   printf("Tiempo = %lf \n", (STOP - START));
 
   return 0;
