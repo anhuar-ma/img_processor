@@ -35,7 +35,7 @@ void process_image_parallel(const char *input_file, int thread_count) {
 
   LOG("Processing image: %s\n", input_file);
 
-  // Clean the input file name
+  // Limpiar el nombre del archivo de entrada
   const char *base_name = input_file;
   const char *slash     = strrchr(input_file, '/');
   if (slash) {
@@ -134,17 +134,20 @@ void process_image_parallel(const char *input_file, int thread_count) {
 
 
 int main() {
-  // Enable nested parallelism so the threads in main can spawn their own
-  // threads Note: Depending on your OpenMP version, you might use
+
+  const double START = omp_get_wtime();
+
+  // Habilitar el paralelismo anidado para que los hilos de main puedan crear
+  // sus propios hilos. Nota: según tu versión de OpenMP, podrías usar
   omp_set_max_active_levels(2);
   // omp_set_nested(1);
 
-  // Distribute threads: 6 threads per image x 3 images = 18 active threads
-  // max
+  // Distribuir hilos: 2 hilos por imagen x 3 imágenes = 6 hilos activos
   int inner_thread_count = 6;
 
-// Wrap the sections in a parallel block.
-// We specify num_threads(3) because there are 3 sections (files) to process.
+// Envolver las secciones en un bloque paralelo.
+// Especificamos num_threads(3) porque hay 3 secciones (archivos) para
+// procesar.
 #pragma omp parallel sections num_threads(3) default(none)                     \
   shared(inner_thread_count)
   {
@@ -163,6 +166,9 @@ int main() {
       process_image_parallel("sample3.bmp", inner_thread_count);
     }
   }
+
+  const double STOP = omp_get_wtime();
+  printf("Tiempo = %lf \n", (STOP - START));
 
   return 0;
 }

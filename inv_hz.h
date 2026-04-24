@@ -83,7 +83,7 @@ static inline void inv_hz_gris(const char           *input_path,
   free(input_row);
   free(output_row);
 
-  // Escritura en archivo de registro
+  // Escritura en el archivo de registro
   // FILE *outputLog = fopen("output_log.txt", "a");
   // if (outputLog != NULL) {
   //   fprintf(outputLog, "Función: inv_hz_color, con %s\n", input_path);
@@ -181,4 +181,4 @@ static inline void inv_hz_color(const char           *input_path,
   bmp_close_process_io(&io);
 }
 
-#endif // !INV_COLOR_H
+#endif // fin de INV_HZ_H

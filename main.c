@@ -26,15 +26,15 @@ int main() {
 
   printf("Processing image: %s\n", input_file);
 
-  // Apply grayscale filter
+  // Aplicar filtro de escala de grises
   printf("Applying grayscale filter...\n");
   gris(input_file, "img_gris.bmp", &bmp);
 
-  // Apply blur filter
+  // Aplicar filtro de desenfoque
   printf("Applying blur filter...\n");
   desenfoque(input_file, "img_desenfoque", 16, &bmp);
 
-  // Apply blur filter
+  // Aplicar filtro de desenfoque en gris
   printf("Applying gray blur filter...\n");
   desenfoque_gris(input_file, "img_desenfoque_gris", 16, &bmp);
 

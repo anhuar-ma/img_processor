@@ -69,7 +69,7 @@ void desenfoque_gris(const char           *input_path,
   // Paso intermedio: desenfoque horizontal
   for (int y = 0; y < abs_height; y++) {
     for (int x = 0; x < width; x++) {
-      // first conver it to gray
+      // primero convertirlo a gris
 
       int sumB = 0, sumG = 0, sumR = 0, count = 0;
 
@@ -77,7 +77,7 @@ void desenfoque_gris(const char           *input_path,
         int nx = x + dx;
 
         if (nx >= 0 && nx < width) {
-          // tranform it to gray
+          // transformarlo a gris
 
 
           int idx = nx * bytes_per_pixel;
@@ -104,13 +104,13 @@ void desenfoque_gris(const char           *input_path,
       temp_rows[y][index + 1] = sumG / count;
       temp_rows[y][index + 2] = sumR / count;
 
-      // Preservar canal Alpha si es de 32-bits
+      // Preservar el canal alfa si es de 32 bits
       if (bytes_per_pixel == 4) {
         temp_rows[y][index + 3] = input_rows[y][index + 3];
       }
     }
 
-    // Copiar padding
+    // Copiar el padding
     for (int p = width * bytes_per_pixel; p < row_padded; p++) {
       temp_rows[y][p] = input_rows[y][p];
     }
@@ -137,13 +137,13 @@ void desenfoque_gris(const char           *input_path,
       output_rows[y][index + 1] = sumG / count;
       output_rows[y][index + 2] = sumR / count;
 
-      // Preservar canal Alpha si es de 32-bits
+      // Preservar el canal alfa si es de 32 bits
       if (bytes_per_pixel == 4) {
         output_rows[y][index + 3] = temp_rows[y][index + 3];
       }
     }
 
-    // Copiar padding
+    // Copiar el padding
     for (int p = width * bytes_per_pixel; p < row_padded; p++) {
       output_rows[y][p] = temp_rows[y][p];
     }
@@ -157,7 +157,7 @@ void desenfoque_gris(const char           *input_path,
     free(output_rows[i]);
   }
 
-  // Escritura en archivo de registro
+  // Escritura en el archivo de registro
   // FILE *outputLog = fopen("output_log.txt", "a");
   // if (outputLog != NULL) {
   //   fprintf(outputLog, "Función: desenfoque, con %s\n", input_path);

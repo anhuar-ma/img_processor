@@ -113,7 +113,7 @@ static inline void inv_vt_gris(const char           *input_path,
   free(rows);
   free(output_row);
 
-  // Escritura en archivo de registro
+  // Escritura en el archivo de registro
   // FILE *outputLog = fopen("output_log.txt", "a");
   // if (outputLog != NULL) {
   //   fprintf(outputLog, "Función: inv_vt_gris, con %s\n", input_path);
@@ -199,7 +199,7 @@ static inline void inv_vt_color(const char           *input_path,
   }
   free(rows);
 
-  // Escritura en archivo de registro
+  // Escritura en el archivo de registro
   // FILE *outputLog = fopen("output_log.txt", "a");
   // if (outputLog != NULL) {
   //   fprintf(outputLog, "Función: inv_vt_color, con %s\n", input_path);
@@ -216,4 +216,4 @@ static inline void inv_vt_color(const char           *input_path,
   bmp_close_process_io(&io);
 }
 
-#endif // !INV_VT_H
+#endif // fin de INV_VT_H

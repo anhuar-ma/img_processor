@@ -6,16 +6,16 @@
 #include <string.h>
 
 typedef struct {
-  unsigned char  header[54];   // Base BMP header block
-  unsigned char *extra_header; // Bytes between 54-byte header and pixel data
+  unsigned char  header[54];
+  unsigned char *extra_header;
   int            extra_header_size;
-  int            data_offset; // Pixel array start offset from file beginning
+  int            data_offset;
   int            width;
-  int            height;     // Can be negative for top-down BMPs
-  int            abs_height; // Always positive row count
-  short          bpp;        // Bits per pixel (e.g., 24 or 32)
+  int            height;
+  int            abs_height;
+  short          bpp;
   int            bytes_per_pixel;
-  int            row_padded; // Row size aligned to 4-byte BMP boundary
+  int            row_padded;
 } bmp_image_info;
 
 typedef struct {
@@ -31,12 +31,13 @@ static inline int bmp_read_info(FILE *image, bmp_image_info *info) {
 
   memset(info, 0, sizeof(*info));
 
-  // Read the fixed BMP header region first.
+  // Leer primero la región fija del encabezado BMP.
   if (fread(info->header, sizeof(unsigned char), 54, image) != 54) {
     return 0;
   }
 
-  // Parse core metadata from standard BMP offsets.
+  // Analizar los metadatos principales desde los desplazamientos estándar del
+  // BMP.
   info->data_offset     = *(int *)&info->header[10];
   info->width           = *(int *)&info->header[18];
   info->height          = *(int *)&info->header[22];
@@ -44,7 +45,7 @@ static inline int bmp_read_info(FILE *image, bmp_image_info *info) {
   info->bytes_per_pixel = info->bpp / 8;
   info->abs_height      = abs(info->height);
 
-  // Reject malformed images early.
+  // Rechazar temprano las imágenes mal formadas.
   if (info->width <= 0 || info->abs_height <= 0 || info->bytes_per_pixel <= 0) {
     return 0;
   }
@@ -55,7 +56,8 @@ static inline int bmp_read_info(FILE *image, bmp_image_info *info) {
   }
 
   if (info->extra_header_size > 0) {
-    // Some BMP variants add metadata before pixel data; preserve it.
+    // Algunas variantes de BMP agregan metadatos antes de los pixeles;
+    // conservarlos.
     info->extra_header = (unsigned char *)malloc(info->extra_header_size);
     if (!info->extra_header) {
       return 0;
@@ -72,7 +74,7 @@ static inline int bmp_read_info(FILE *image, bmp_image_info *info) {
     }
   }
 
-  // BMP rows are padded to a 4-byte boundary.
+  // Las filas BMP se rellenan hasta un límite de 4 bytes.
   info->row_padded = (info->width * info->bytes_per_pixel + 3) & (~3);
   return 1;
 }
@@ -83,7 +85,8 @@ static inline int bmp_write_header(FILE                 *outputImage,
     return 0;
   }
 
-  // Write fixed header + optional extra metadata exactly as read.
+  // Escribir el encabezado fijo y los metadatos extra opcionales exactamente
+  // como se leyeron.
   if (fwrite(info->header, sizeof(unsigned char), 54, outputImage) != 54) {
     return 0;
   }
@@ -106,7 +109,7 @@ static inline void bmp_free_info(bmp_image_info *info) {
     return;
   }
 
-  // Free optional preserved metadata buffer.
+  // Liberar el búfer opcional de metadatos preservados.
   if (info->extra_header) {
     free(info->extra_header);
     info->extra_header = NULL;
