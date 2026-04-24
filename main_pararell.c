@@ -144,7 +144,7 @@ int main() {
   // omp_set_nested(1);
 
   // Distribuir hilos: 2 hilos por imagen x 3 imágenes = 6 hilos activos
-  int inner_thread_count = 6;
+  int inner_thread_count = 2;
 
 // Envolver las secciones en un bloque paralelo.
 // Especificamos num_threads(3) porque hay 3 secciones (archivos) para
@@ -169,6 +169,8 @@ int main() {
   }
 
   const double STOP = omp_get_wtime();
+
+  printf("Threads = %d \n", (inner_thread_count * 3));
   printf("Tiempo = %lf \n", (STOP - START));
 
   return 0;
