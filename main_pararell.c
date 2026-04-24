@@ -54,13 +54,14 @@ void process_image_parallel(const char *input_file, int thread_count) {
 #pragma omp parallel sections num_threads(thread_count) default(none)          \
   shared(input_file, input_base, bmp)
   {
-#pragma omp section
-    {
-      char output_name[128];
-      snprintf(output_name, sizeof(output_name), "%s_gris", input_base);
-      LOG("Applying grayscale filter...\n");
-      gris(input_file, output_name, &bmp);
-    }
+    // Funcion que hace solamente gris la imagen
+    // #pragma omp section
+    //     {
+    //       char output_name[128];
+    //       snprintf(output_name, sizeof(output_name), "%s_gris", input_base);
+    //       LOG("Applying grayscale filter...\n");
+    //       gris(input_file, output_name, &bmp);
+    //     }
 
 #pragma omp section
     {
