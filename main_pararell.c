@@ -1,3 +1,21 @@
+/*
+ * main_pararell.c
+ * Procesador de imágenes BMP con paralelismo por tareas (OpenMP)
+ *
+ * Uso:
+ *   ./imgprocP <img1.bmp> [img2.bmp ...] \
+ *              --transforms <vg|vc|hg|hc|dg|dc> [...] \
+ *              [--kernel-dg N] [--kernel-dc N] [--threads N]
+ *
+ * Acrónimos de transformación:
+ *   vg  → inversión vertical escala de grises
+ *   vc  → inversión vertical a colores
+ *   hg  → inversión horizontal escala de grises
+ *   hc  → inversión horizontal a colores
+ *   dg  → desenfoque escala de grises
+ *   dc  → desenfoque a colores
+ */
+
 #include "bmp_utils.h"
 #include "desenfoque.h"
 #include "gris.h"
@@ -6,204 +24,147 @@
 #include <omp.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
-// #define ENABLE_LOGS
-#ifdef ENABLE_LOGS
-#  define LOG(...) printf(__VA_ARGS__)
-#else
-#  define LOG(...)                                                             \
-    do {                                                                       \
-    } while (0)
-#endif
+#define MAX_IMAGES 10
 
-static int load_bmp_info(const char *input_file, bmp_image_info *bmp) {
-  FILE *image = fopen(input_file, "rb");
-  if (!image) {
-    LOG("Error: No se pudo abrir la imagen original.\n");
+/* ─── flags de transformación (globales de solo lectura en runtime) ─── */
+static int do_vg = 0, do_vc = 0, do_hg = 0, do_hc = 0, do_dg = 0, do_dc = 0;
+static int kernel_dg = 16, kernel_dc = 16;
+
+/* ─── carga el encabezado BMP de un archivo ─── */
+static int load_bmp_info(const char *path, bmp_image_info *bmp) {
+  FILE *f = fopen(path, "rb");
+  if (!f) {
+    fprintf(stderr, "Error: no se pudo abrir '%s'\n", path);
     return 0;
   }
-
-  if (!bmp_read_info(image, bmp)) {
-    LOG("Error: encabezado BMP invalido o incompleto.\n");
-    fclose(image);
+  if (!bmp_read_info(f, bmp)) {
+    fprintf(stderr, "Error: encabezado BMP inválido en '%s'\n", path);
+    fclose(f);
     return 0;
   }
-
-  fclose(image);
+  fclose(f);
   return 1;
 }
 
+int main(int argc, char *argv[]) {
+  const char    *images[MAX_IMAGES];
+  int            image_count  = 0;
+  int            thread_count = 18;
 
-int main() {
+  /* ─── Parseo de argumentos ─── */
+  int i = 1;
+  while (i < argc) {
 
+    if (strcmp(argv[i], "--transforms") == 0) {
+      i++;
+      /* consumir todos los códigos hasta el siguiente flag o fin */
+      while (i < argc && argv[i][0] != '-') {
+        if      (strcmp(argv[i], "vg") == 0) do_vg = 1;
+        else if (strcmp(argv[i], "vc") == 0) do_vc = 1;
+        else if (strcmp(argv[i], "hg") == 0) do_hg = 1;
+        else if (strcmp(argv[i], "hc") == 0) do_hc = 1;
+        else if (strcmp(argv[i], "dg") == 0) do_dg = 1;
+        else if (strcmp(argv[i], "dc") == 0) do_dc = 1;
+        i++;
+      }
 
-  // Habilitar el paralelismo anidado para que los hilos de main puedan crear
-  // sus propios hilos. Nota: según tu versión de OpenMP, podrías usar
-  // omp_set_nested(1);
+    } else if (strcmp(argv[i], "--kernel-dg") == 0) {
+      i++;
+      if (i < argc) { kernel_dg = atoi(argv[i]); i++; }
 
-  const int thread_count = 2;
+    } else if (strcmp(argv[i], "--kernel-dc") == 0) {
+      i++;
+      if (i < argc) { kernel_dc = atoi(argv[i]); i++; }
 
+    } else if (strcmp(argv[i], "--threads") == 0) {
+      i++;
+      if (i < argc) { thread_count = atoi(argv[i]); i++; }
 
-  const char *img1 = "sample1.bmp";
-  const char *img2 = "sample2.bmp";
-  const char *img3 = "sample3.bmp";
+    } else if (argv[i][0] != '-' && image_count < MAX_IMAGES) {
+      images[image_count++] = argv[i++];
 
-  bmp_image_info bmp1;
-  bmp_image_info bmp2;
-  bmp_image_info bmp3;
+    } else {
+      i++;
+    }
+  }
 
-  if (!load_bmp_info(img1, &bmp1) || !load_bmp_info(img2, &bmp2)
-      || !load_bmp_info(img3, &bmp3)) {
-    bmp_free_info(&bmp1);
-    bmp_free_info(&bmp2);
-    bmp_free_info(&bmp3);
+  /* ─── Validaciones básicas ─── */
+  if (image_count == 0) {
+    fprintf(stderr, "Error: no se proporcionaron imágenes.\n");
+    fprintf(stderr, "Uso: ./imgprocP img1.bmp [img2...] --transforms vg vc ...\n");
+    return 1;
+  }
+  if (!do_vg && !do_vc && !do_hg && !do_hc && !do_dg && !do_dc) {
+    fprintf(stderr, "Error: no se seleccionó ninguna transformación.\n");
     return 1;
   }
 
-  omp_set_num_threads(thread_count);
-  const double START = omp_get_wtime();
+  /* ─── Leer encabezados BMP ─── */
+  bmp_image_info bmps[MAX_IMAGES];
+  memset(bmps, 0, sizeof(bmps));
 
-
-#pragma omp parallel sections
-  {
-    // Funcion que hace solamente gris la imagen
-    // #pragma omp section
-    //     {
-    //       char output_name[128];
-    //       snprintf(output_name, sizeof(output_name), "%s_gris", input_base);
-    //       LOG("Applying grayscale filter...\n");
-    //       gris(input_file, output_name, &bmp);
-    //     }
-
-    // --------IMG1----------------
-#pragma omp section
-    {
-      LOG("Applying blur filter...\n");
-      desenfoque(img1, "desenfoque", 16, &bmp1);
-    }
-
-#pragma omp section
-    {
-      LOG("Applying gray blur filter...\n");
-      desenfoque_gris(img1, "desenfoque_gris", 16, &bmp1);
-    }
-
-#pragma omp section
-    {
-      LOG("Applying inverting image...\n");
-      inv_hz_color(img1, "inverted", &bmp1);
-    }
-
-#pragma omp section
-    {
-      LOG("Applying inverting image gray...\n");
-      inv_hz_gris(img1, "inverted_gris", &bmp1);
-    }
-
-#pragma omp section
-    {
-      LOG("Applying inverting vertically image...\n");
-      inv_vt_color(img1, "inverted_vt", &bmp1);
-    }
-
-#pragma omp section
-    {
-      LOG("Applying inverting vertically image gray...\n");
-      inv_vt_gris(img1, "inverted_gris_vt", &bmp1);
-    }
-
-
-    // --------IMG2----------------
-
-#pragma omp section
-    {
-      LOG("Applying blur filter...\n");
-      desenfoque(img2, "desenfoque", 16, &bmp2);
-    }
-
-#pragma omp section
-    {
-      LOG("Applying gray blur filter...\n");
-      desenfoque_gris(img2, "desenfoque_gris", 16, &bmp2);
-    }
-
-#pragma omp section
-    {
-      LOG("Applying inverting image...\n");
-      inv_hz_color(img2, "inverted", &bmp2);
-    }
-
-#pragma omp section
-    {
-      LOG("Applying inverting image gray...\n");
-      inv_hz_gris(img2, "inverted_gris", &bmp2);
-    }
-
-#pragma omp section
-    {
-      LOG("Applying inverting vertically image...\n");
-      inv_vt_color(img2, "inverted_vt", &bmp2);
-    }
-
-#pragma omp section
-    {
-      LOG("Applying inverting vertically image gray...\n");
-      inv_vt_gris(img2, "inverted_gris_vt", &bmp2);
-    }
-
-
-    // --------IMG3----------------
-
-#pragma omp section
-    {
-      LOG("Applying blur filter...\n");
-      desenfoque(img3, "desenfoque", 16, &bmp3);
-    }
-
-#pragma omp section
-    {
-      LOG("Applying gray blur filter...\n");
-      desenfoque_gris(img3, "desenfoque_gris", 16, &bmp3);
-    }
-
-#pragma omp section
-    {
-      LOG("Applying inverting image...\n");
-      inv_hz_color(img3, "inverted", &bmp3);
-    }
-
-#pragma omp section
-    {
-      LOG("Applying inverting image gray...\n");
-      inv_hz_gris(img3, "inverted_gris", &bmp3);
-    }
-
-#pragma omp section
-    {
-      LOG("Applying inverting vertically image...\n");
-      inv_vt_color(img3, "inverted_vt", &bmp3);
-    }
-
-#pragma omp section
-    {
-      LOG("Applying inverting vertically image gray...\n");
-      inv_vt_gris(img3, "inverted_gris_vt", &bmp3);
+  for (int img = 0; img < image_count; img++) {
+    if (!load_bmp_info(images[img], &bmps[img])) {
+      for (int j = 0; j < img; j++) bmp_free_info(&bmps[j]);
+      return 1;
     }
   }
 
+  /* ─── Paralelismo por tareas ─── */
+  omp_set_num_threads(thread_count);
+  const double START = omp_get_wtime();
 
-  bmp_free_info(&bmp1);
-  bmp_free_info(&bmp2);
-  bmp_free_info(&bmp3);
+#pragma omp parallel
+  {
+#pragma omp single
+    {
+      for (int img = 0; img < image_count; img++) {
 
-  LOG("Processing complete!\n");
-  LOG("Output files created in ./img/ using input base name + suffix.\n");
+        if (do_vg) {
+#pragma omp task firstprivate(img)
+          inv_vt_gris(images[img], "vg", &bmps[img]);
+        }
 
+        if (do_vc) {
+#pragma omp task firstprivate(img)
+          inv_vt_color(images[img], "vc", &bmps[img]);
+        }
+
+        if (do_hg) {
+#pragma omp task firstprivate(img)
+          inv_hz_gris(images[img], "hg", &bmps[img]);
+        }
+
+        if (do_hc) {
+#pragma omp task firstprivate(img)
+          inv_hz_color(images[img], "hc", &bmps[img]);
+        }
+
+        if (do_dg) {
+          int k = kernel_dg;
+#pragma omp task firstprivate(img, k)
+          desenfoque_gris(images[img], "dg", k, &bmps[img]);
+        }
+
+        if (do_dc) {
+          int k = kernel_dc;
+#pragma omp task firstprivate(img, k)
+          desenfoque(images[img], "dc", k, &bmps[img]);
+        }
+      }
+    } /* end single */
+  }   /* end parallel */
 
   const double STOP = omp_get_wtime();
 
-  printf("Threads = %d \n", (thread_count));
-  printf("Tiempo = %lf \n", (STOP - START));
+  /* ─── Liberar memoria ─── */
+  for (int img = 0; img < image_count; img++) bmp_free_info(&bmps[img]);
+
+  /* ─── Salida que la GUI parsea ─── */
+  printf("TIEMPO:%.4f\n", STOP - START);
+  printf("THREADS:%d\n",  thread_count);
 
   return 0;
 }
