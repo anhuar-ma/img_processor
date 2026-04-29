@@ -9,15 +9,16 @@ import subprocess
 import threading
 import tkinter as tk
 from tkinterdnd2 import TkinterDnD, DND_FILES
+from PIL import Image, ImageTk
 
-# Colores
-BG = "#2d2d2d"   # fondo general
-PANEL = "#1a1a1a"   # panel fotos
-ACCENT = "#4a9eff"   # color de selección
-FG = "#ffffff"   # texto principal
-SUBFG = "#888888"   # texto secundario
-FIELD = "#3c3c3c"   # fondo de campos de entrada
-BTN = "#2D34FF"   # fondo de botones
+# ─── Paleta de colores (oscuro, como la captura) ────────────────────────────
+BG       = "#2d2d2d"   # fondo general
+PANEL    = "#1a1a1a"   # panel izquierdo (drop zone)
+ACCENT   = "#4a9eff"   # color de selección
+FG       = "#ffffff"   # texto principal
+SUBFG    = "#888888"   # texto secundario
+FIELD    = "#3c3c3c"   # fondo de campos de entrada
+BTN      = "#4a4a4a"   # fondo de botones
 
 
 # Clase principal
@@ -30,10 +31,10 @@ class App(TkinterDnD.Tk):
         self.configure(bg=BG)
         self.resizable(False, False)
 
-        # Estado 
+        # Estado
         self.images: list[str] = []   # rutas absolutas de los archivos .bmp
 
-        # Variables checkboxes
+        # Variables de los checkboxes
         self.var_vg = tk.BooleanVar()
         self.var_vc = tk.BooleanVar()
         self.var_hg = tk.BooleanVar()
@@ -49,14 +50,119 @@ class App(TkinterDnD.Tk):
         self.tiempo_var = tk.StringVar()
         self.ruta_var   = tk.StringVar()
 
+        # Cargar logo del Tec (se guarda en self para que tkinter no lo elimine)
+        self.logo_img = self._load_logo(size=60)
+
+        self._build_menu()
         self._build_ui()
+
+    # Carga el logo redimensionado
+    def _load_logo(self, size=60):
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        logo_path  = os.path.join(script_dir, "tec_logo.png")
+        try:
+            img = Image.open(logo_path).convert("RGBA")
+            img = img.resize((size, size), Image.LANCZOS)
+            return ImageTk.PhotoImage(img)
+        except Exception:
+            return None   # si no encuentra el archivo, no muestra nada
+
+    # Barra de menú nativa de macOS
+    def _build_menu(self):
+        menubar = tk.Menu(self)
+
+        # Menú "Menu" visible en la barra de macOS
+        app_menu = tk.Menu(menubar, tearoff=0)
+        app_menu.add_command(label="Acerca de", command=self._show_about)
+        app_menu.add_separator()
+        app_menu.add_command(label="Salir", command=self.quit)
+
+        menubar.add_cascade(label="Menu", menu=app_menu)
+        self.config(menu=menubar)
+
+    # Ventana "Acerca de"
+    def _show_about(self):
+        win = tk.Toplevel(self)
+        win.title("Acerca de")
+        win.configure(bg=BG)
+        win.resizable(False, False)
+
+        # Centrar relativo a la ventana principal
+        self.update_idletasks()
+        x = self.winfo_x() + self.winfo_width()  + 20
+        y = self.winfo_y() + 60
+        win.geometry(f"320x340+{x}+{y}")
+
+        frame = tk.Frame(win, bg=BG, padx=24, pady=24)
+        frame.pack(fill="both", expand=True)
+
+        # Información del proyecto
+        info_lines = [
+            ("TC3003",                   True),
+            ("Tecnológico de Monterrey", False),
+            ("Campus Puebla",            False),
+            ("Mayo 2026",                False),
+        ]
+
+        for text, bold in info_lines:
+            font = ("Helvetica", 12, "bold") if bold else ("Helvetica", 12)
+            tk.Label(frame, text=text, bg=BG, fg=FG,
+                     font=font, anchor="w").pack(fill="x")
+
+        tk.Frame(frame, bg="#444444", height=1).pack(fill="x", pady=12)
+
+        tk.Label(frame, text="Equipo:", bg=BG, fg=FG,
+                 font=("Helvetica", 12, "bold"), anchor="w").pack(fill="x")
+
+        # Nombres del equipo (reemplaza con los reales)
+        integrantes = [
+            "1- Alejandro Guzmán",
+            "2- Juan Daniel Salmeron",
+            "3- Javier Cuatepotzo",
+            "4- Anhuar Maldonado",
+            "5- Manuel Eduardo Covarrubias",
+        ]
+
+        for nombre in integrantes:
+            tk.Label(frame, text=nombre, bg=BG, fg=FG,
+                     font=("Helvetica", 11), anchor="w").pack(fill="x", pady=1)
+
+        tk.Frame(frame, bg="#444444", height=1).pack(fill="x", pady=12)
+
+        # Logo textual del Tec (esquina inferior derecha)
+        logo_frame = tk.Frame(frame, bg=BG)
+        logo_frame.pack(fill="x")
+
+        tk.Button(
+            logo_frame,
+            text="Cerrar",
+            bg=BTN, fg=FG,
+            activebackground="#666",
+            activeforeground=FG,
+            relief="flat",
+            font=("Helvetica", 11),
+            cursor="hand2",
+            command=win.destroy,
+            padx=10, pady=4,
+        ).pack(side="left")
+
+        # Logo del Tec en "Acerca de" — se carga con tamaño más pequeño
+        about_logo = self._load_logo(size=50)
+        if about_logo:
+            logo_lbl = tk.Label(logo_frame, image=about_logo, bg=BG)
+            logo_lbl.image = about_logo   # evitar que el GC lo elimine
+            logo_lbl.pack(side="right")
+        else:
+            tk.Label(logo_frame, text="TEC de Monterrey",
+                     bg=BG, fg=SUBFG, font=("Helvetica", 9, "bold")
+                     ).pack(side="right")
 
     # Construcción de la interfaz
     def _build_ui(self):
         root = tk.Frame(self, bg=BG, padx=18, pady=18)
         root.pack(fill="both", expand=True)
 
-        # Panel izquierdo y controles derecha
+        # Fila superior: panel izquierdo + controles derecha
         top = tk.Frame(root, bg=BG)
         top.pack(fill="both", expand=True)
 
@@ -66,10 +172,10 @@ class App(TkinterDnD.Tk):
         # Separador
         tk.Frame(root, bg="#444444", height=1).pack(fill="x", pady=(14, 0))
 
-        # Tiempo, ruta, botón
+        # Fila inferior: tiempo, ruta, botón
         self._build_bottom(root)
 
-    # Panel para arrastrar y soltar imágenes
+    # Panel de arrastre (izquierda)
     def _build_drop_panel(self, parent):
         frame = tk.Frame(parent, bg=PANEL, width=265, height=310)
         frame.pack(side="left", fill="y", padx=(0, 18))
@@ -100,7 +206,7 @@ class App(TkinterDnD.Tk):
         # Instrucción de eliminación
         tk.Label(
             frame,
-            text="Click derecho para quitar archivo",
+            text="Clic derecho para quitar archivo",
             bg=PANEL, fg=SUBFG,
             font=("Helvetica", 8),
         ).pack(pady=(0, 6))
@@ -141,7 +247,7 @@ class App(TkinterDnD.Tk):
                 activebackground=BG,
                 activeforeground=FG,
                 font=("Helvetica", 12),
-                cursor="hand",
+                cursor="hand2",
             )
             cb.pack(side="left")
 
@@ -175,11 +281,11 @@ class App(TkinterDnD.Tk):
             todas_row,
             text="  Todas  ",
             bg=BTN, fg=FG,
-            activebackground="#4D4D4D",
+            activebackground="#666",
             activeforeground=FG,
             relief="flat",
             font=("Helvetica", 12),
-            cursor="hand",
+            cursor="hand2",
             command=self._select_all,
             padx=6, pady=4,
         ).pack(side="left")
@@ -192,7 +298,7 @@ class App(TkinterDnD.Tk):
             justify="left",
         ).pack(side="left")
 
-    # ── Sección inferior: tiempo, ruta, ejecutar ─────────────────────────────
+    # Sección inferior: tiempo, ruta, ejecutar
     def _build_bottom(self, parent):
         bottom = tk.Frame(parent, bg=BG)
         bottom.pack(fill="x", pady=(14, 0))
@@ -227,7 +333,7 @@ class App(TkinterDnD.Tk):
             readonlybackground=FIELD,
         ).pack(anchor="w", pady=(3, 0))
 
-        # botón ejecutar y logo
+        # Derecha: botón ejecutar + logo
         right = tk.Frame(bottom, bg=BG)
         right.pack(side="right", anchor="s")
 
@@ -235,18 +341,23 @@ class App(TkinterDnD.Tk):
             right,
             text="  Ejecutar  ",
             bg=BTN, fg=FG,
-            activebackground="#424242",
+            activebackground="#666",
             activeforeground=FG,
             relief="flat",
             font=("Helvetica", 14),
-            cursor="hand",
+            cursor="hand2",
             command=self._execute,
             padx=12, pady=6,
         )
         self.exec_btn.pack(pady=(0, 10))
 
-        # Logo del Tec
-       
+        # Logo del Tec (imagen)
+        if self.logo_img:
+            tk.Label(right, image=self.logo_img, bg=BG).pack()
+        else:
+            tk.Label(right, text="TEC\nde Monterrey",
+                     bg=BG, fg=SUBFG, font=("Helvetica", 8, "bold"),
+                     justify="center").pack()
 
     # Lógica de drag-and-drop
     def _on_drop(self, event):
@@ -283,11 +394,11 @@ class App(TkinterDnD.Tk):
                     self.var_hc, self.var_dg, self.var_dc):
             var.set(True)
 
-    # Ejecutar procesamiento 
+    # Ejecutar procesamiento
     def _execute(self):
         # Validaciones
         if not self.images:
-            self.tiempo_var.set("Sin imágenes cargadas")
+            self.tiempo_var.set("⚠ Sin imágenes cargadas")
             return
 
         selected = []
@@ -299,7 +410,7 @@ class App(TkinterDnD.Tk):
         if self.var_dc.get(): selected.append("dc")
 
         if not selected:
-            self.tiempo_var.set("Selecciona al menos una transformación")
+            self.tiempo_var.set("⚠ Selecciona al menos una transformación")
             return
 
         # Kernels
