@@ -2,3 +2,5 @@
 img/*
 # ...except the .gitkeep file
 !img/.gitkeep
+./env
+.DS_Store

@@ -59,7 +59,7 @@ class App(TkinterDnD.Tk):
     # Carga el logo redimensionado
     def _load_logo(self, size=60):
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        logo_path  = os.path.join(script_dir, "tec_logo.png")
+        logo_path  = os.path.join(script_dir, "./assets/logos/tec_logo.png")
         try:
             img = Image.open(logo_path).convert("RGBA")
             img = img.resize((size, size), Image.LANCZOS)
@@ -114,7 +114,6 @@ class App(TkinterDnD.Tk):
         tk.Label(frame, text="Equipo:", bg=BG, fg=FG,
                  font=("Helvetica", 12, "bold"), anchor="w").pack(fill="x")
 
-        # Nombres del equipo (reemplaza con los reales)
         integrantes = [
             "1- Alejandro Guzmán",
             "2- Juan Daniel Salmeron",
@@ -473,8 +472,7 @@ class App(TkinterDnD.Tk):
         except FileNotFoundError:
             self.after(0, self._on_error,
                        f"Ejecutable no encontrado: {executable}\n"
-                       "Compila primero con:\n"
-                       "gcc-14 -O2 -fopenmp main_pararell.c -o imgprocP")
+                       "Compila: main_pararell.c -o imgprocP")
         except Exception as e:
             self.after(0, self._on_error, str(e))
 
