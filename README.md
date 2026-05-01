@@ -1,12 +1,19 @@
-# Correr sin paralelizar
+# Coomo ejectura la aplicacion
 
-`gcc main_pararell.c -o imgproc && ./imgproc`    
+## Instala las depencias: 
+- tk en tu computadora
+- el paquete ` tkinterdnd2` de python
 
-# Correr paralelizado
+
+## Ejectuar la aplicacion
+1) Compila el archivo main_pararell.c:
+    
+   - Ejemplo en linux:
+    
+      `gcc -fopenmp main_pararell.c -o imgprocP`
+
+2) Ejecuta la gui de python:
+
+    `python gui.py`
 
 
-`gcc -O2 -fopenmp main_pararell.c -o imgprocP && ./imgprocP`
-
-## Nota
-
-Necesita existir la carpeta img en este directorio porque ahi se generan las imagenes

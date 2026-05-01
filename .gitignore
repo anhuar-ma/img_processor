@@ -4,3 +4,5 @@ img/*
 !img/.gitkeep
 ./env
 .DS_Store
+# Avoid using a imgprocP compile in another operating system
+imgprocP

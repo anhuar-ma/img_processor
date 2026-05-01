@@ -427,6 +427,7 @@ class App(TkinterDnD.Tk):
         self.tiempo_var.set("Procesando…")
         self.ruta_var.set("")
 
+        # Ejecuta el procesamiento en segundo plano para no bloquear la GUI.
         threading.Thread(
             target=self._run,
             args=(selected, k_dg, k_dc),
