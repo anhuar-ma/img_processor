@@ -29,7 +29,8 @@ class App(TkinterDnD.Tk):
 
         self.title("Procesamiento de imágenes")
         self.configure(bg=BG)
-        self.resizable(False, False)
+        self.geometry("700x500")  # Ancho x Alto inicial
+        self.resizable(True, True)  # Permitir redimensionamiento
 
         # Estado
         self.images: list[str] = []   # rutas absolutas de los archivos .bmp

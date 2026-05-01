@@ -2,7 +2,7 @@
 
 ## Instala las depencias: 
 - tk en tu computadora
-- el paquete ` tkinterdnd2` de python
+- el paquete ` tkinterdnd2` y `pillow` de python
 
 
 ## Ejectuar la aplicacion
@@ -10,7 +10,7 @@
     
    - Ejemplo en linux:
     
-      `gcc -fopenmp main_pararell.c -o imgprocP`
+      ` gcc -O2 -fopenmp main_pararell.c -o imgprocP  `
 
 2) Ejecuta la gui de python:
 
