@@ -7,6 +7,7 @@ El ejecutable 'imgprocP' debe estar en el mismo directorio que este script.
 import os
 import subprocess
 import threading
+import shutil
 import tkinter as tk
 from tkinterdnd2 import TkinterDnD, DND_FILES
 from PIL import Image, ImageTk
@@ -67,6 +68,22 @@ class App(TkinterDnD.Tk):
             return ImageTk.PhotoImage(img)
         except Exception:
             return None   # si no encuentra el archivo, no muestra nada
+
+    def _machinefile_slots(self, machinefile_path: str) -> int:
+        try:
+            total = 0
+            with open(machinefile_path, "r", encoding="utf-8") as handle:
+                for raw_line in handle:
+                    line = raw_line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    for token in line.split():
+                        if token.startswith("slots="):
+                            total += int(token.split("=", 1)[1])
+                            break
+            return total if total > 0 else 1
+        except Exception:
+            return 1
 
     # Barra de menú nativa de macOS
     def _build_menu(self):
@@ -396,11 +413,6 @@ class App(TkinterDnD.Tk):
 
     # Ejecutar procesamiento
     def _execute(self):
-        # Validaciones
-        if not self.images:
-            self.tiempo_var.set("⚠ Sin imágenes cargadas")
-            return
-
         selected = []
         if self.var_vg.get(): selected.append("vg")
         if self.var_vc.get(): selected.append("vc")
@@ -426,7 +438,7 @@ class App(TkinterDnD.Tk):
         # Deshabilitar botón mientras procesa
         self.exec_btn.config(state="disabled", text="  Procesando...  ")
         self.tiempo_var.set("Procesando…")
-        self.ruta_var.set("")
+        self.ruta_var.set("" if self.images else "img_to_process")
 
         # Ejecuta el procesamiento en segundo plano para no bloquear la GUI.
         threading.Thread(
@@ -437,14 +449,35 @@ class App(TkinterDnD.Tk):
 
     def _run(self, selected: list, k_dg: int, k_dc: int):
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        executable = os.path.join(script_dir, "imgprocP")
+        executable = os.path.join(script_dir, "execute.sh")
         img_dir    = os.path.join(script_dir, "img")
+        machinefile = os.path.join(script_dir, "machinefile")
 
         # Crear carpeta de salida si no existe
         os.makedirs(img_dir, exist_ok=True)
 
+        launcher = shutil.which("mpirun") or shutil.which("mpiexec")
+        if not launcher:
+            self.after(0, self._on_error,
+                       "No se encontró mpirun/mpiexec en el sistema")
+            return
+
+        nprocs = 1
+        if os.path.exists(machinefile):
+            nprocs = self._machinefile_slots(machinefile)
+
+        env_nprocs = os.environ.get("MPI_NP") or os.environ.get("MPI_PROCS")
+        if env_nprocs:
+            try:
+                nprocs = max(1, int(env_nprocs))
+            except ValueError:
+                pass
+
         # Construir comando
-        cmd = [executable] + self.images + ["--transforms"] + selected
+        cmd = [launcher, "-np", str(nprocs)]
+        if os.path.exists(machinefile):
+            cmd += ["--hostfile", machinefile]
+        cmd += [executable] + self.images + ["--transforms"] + selected
 
         if "dg" in selected:
             cmd += ["--kernel-dg", str(k_dg)]
@@ -474,7 +507,8 @@ class App(TkinterDnD.Tk):
         except FileNotFoundError:
             self.after(0, self._on_error,
                        f"Ejecutable no encontrado: {executable}\n"
-                       "Compila: main_pararell.c -o imgprocP")
+                       "Compila: mpicc -O2 main_pararell.c -o imgprocP\n"
+                       "y asegúrate de que execute.sh sea ejecutable")
         except Exception as e:
             self.after(0, self._on_error, str(e))
 

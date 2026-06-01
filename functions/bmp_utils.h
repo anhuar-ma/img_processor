@@ -5,6 +5,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define BMP_OUTPUT_DIR "/img"
+
 typedef struct {
   unsigned char  header[54];
   unsigned char *extra_header;
@@ -166,12 +168,16 @@ static inline int bmp_open_process_io(const char           *input_path,
     return 0;
   }
 
-  snprintf(
-    io->output_path, sizeof(io->output_path), "./img/%s.bmp", name_output);
+  snprintf(io->output_path,
+           sizeof(io->output_path),
+           "%s/%s.bmp",
+           BMP_OUTPUT_DIR,
+           name_output);
   io->outputImage = fopen(io->output_path, "wb");
   if (!io->outputImage) {
-    printf("Error: No se pudo crear %s. ¿Existe la carpeta ./img/?\n",
-           io->output_path);
+    printf("Error: No se pudo crear %s. ¿Existe la carpeta %s/?\n",
+           io->output_path,
+           BMP_OUTPUT_DIR);
     fclose(io->image);
     io->image = NULL;
     return 0;
