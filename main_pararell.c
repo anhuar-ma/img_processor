@@ -27,7 +27,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define MAX_IMAGES 50
+#define MAX_IMAGES 600
 #define MAX_TASKS (MAX_IMAGES * 6)
 
 /* ─── flags de transformación (globales de solo lectura en runtime) ─── */
@@ -120,7 +120,7 @@ static int load_default_images(const char       *directory,
 
   for (int idx = 0; idx < entry_count && idx < max_images; idx++) {
     storage[idx] = entries[idx];
-    images[idx] = storage[idx].path;
+    images[idx]  = storage[idx].path;
   }
 
   return entry_count < max_images ? entry_count : max_images;
@@ -260,31 +260,84 @@ int main(int argc, char *argv[]) {
     }
   }
 
-  /* Distribución por imagen: cada rank toma imágenes completas
-     (img = world_rank; img < image_count; img += world_size) y
-     ejecuta todas las transformaciones seleccionadas sobre esa imagen. */
+  /* ─── Construir lista plana de tareas: una transformación por imagen ─── */
+  static image_task tasks[MAX_TASKS];
+  int               task_count = 0;
+  for (int img = 0; img < image_count; img++) {
+    if (do_vg)
+      tasks[task_count++] = (image_task){img, TASK_VG, 0};
+    if (do_vc)
+      tasks[task_count++] = (image_task){img, TASK_VC, 0};
+    if (do_hg)
+      tasks[task_count++] = (image_task){img, TASK_HG, 0};
+    if (do_hc)
+      tasks[task_count++] = (image_task){img, TASK_HC, 0};
+    if (do_dg)
+      tasks[task_count++] = (image_task){img, TASK_DG, kernel_dg};
+    if (do_dc)
+      tasks[task_count++] = (image_task){img, TASK_DC, kernel_dc};
+  }
+
+  /* ─── Distribución dinámica maestro/trabajador ───
+     El rank 0 reparte tareas bajo demanda: cada trabajador pide una tarea,
+     la ejecuta y vuelve a pedir. Los ranks rápidos (ub0) completan más
+     tareas que los lentos (ub2) de forma automática, sin pesos fijos.
+
+     Protocolo de mensajes:
+       TAG_REQUEST  trabajador -> maestro : "estoy libre"
+       TAG_WORK     maestro -> trabajador : payload de 3 enteros (tarea)
+       TAG_STOP     maestro -> trabajador : "no queda trabajo, termina"
+
+     El payload viaja como int[3] (image_index, kind, kernel_size) para ser
+     seguro entre arquitecturas (x86_64 <-> aarch64). No se envían píxeles:
+     cada rank ya cargó images[] y bmps[] localmente. */
+  enum { TAG_REQUEST = 1, TAG_WORK = 2, TAG_STOP = 3 };
 
   MPI_Barrier(MPI_COMM_WORLD);
   const double start = MPI_Wtime();
 
-  for (int img = world_rank; img < image_count; img += world_size) {
-    if (do_vg) {
-      run_task(&(image_task){img, TASK_VG, 0}, images, bmps);
+  if (world_size == 1) {
+    /* sin trabajadores: el único proceso ejecuta todo */
+    for (int t = 0; t < task_count; t++)
+      run_task(&tasks[t], images, bmps);
+
+  } else if (world_rank == 0) {
+    /* ─── maestro: despacha tareas bajo demanda ─── */
+    int        next   = 0;
+    int        active = world_size - 1;
+    int        msg[3];
+    MPI_Status st;
+
+    while (active > 0) {
+      MPI_Recv(
+        msg, 1, MPI_INT, MPI_ANY_SOURCE, TAG_REQUEST, MPI_COMM_WORLD, &st);
+
+      if (next < task_count) {
+        msg[0] = tasks[next].image_index;
+        msg[1] = (int)tasks[next].kind;
+        msg[2] = tasks[next].kernel_size;
+        MPI_Send(msg, 3, MPI_INT, st.MPI_SOURCE, TAG_WORK, MPI_COMM_WORLD);
+        next++;
+      } else {
+        MPI_Send(msg, 3, MPI_INT, st.MPI_SOURCE, TAG_STOP, MPI_COMM_WORLD);
+        active--;
+      }
     }
-    if (do_vc) {
-      run_task(&(image_task){img, TASK_VC, 0}, images, bmps);
-    }
-    if (do_hg) {
-      run_task(&(image_task){img, TASK_HG, 0}, images, bmps);
-    }
-    if (do_hc) {
-      run_task(&(image_task){img, TASK_HC, 0}, images, bmps);
-    }
-    if (do_dg) {
-      run_task(&(image_task){img, TASK_DG, kernel_dg}, images, bmps);
-    }
-    if (do_dc) {
-      run_task(&(image_task){img, TASK_DC, kernel_dc}, images, bmps);
+
+  } else {
+    /* ─── trabajador: pide, ejecuta, repite hasta TAG_STOP ─── */
+    int        msg[3];
+    MPI_Status st;
+
+    for (;;) {
+      MPI_Send(&world_rank, 1, MPI_INT, 0, TAG_REQUEST, MPI_COMM_WORLD);
+      MPI_Recv(msg, 3, MPI_INT, 0, MPI_ANY_TAG, MPI_COMM_WORLD, &st);
+
+      if (st.MPI_TAG == TAG_STOP)
+        break;
+
+      image_task task = {msg[0], (task_kind)msg[1], msg[2]};
+      run_task(&task, images, bmps);
     }
   }
 

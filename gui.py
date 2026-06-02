@@ -5,11 +5,14 @@ El ejecutable 'imgprocP' debe estar en el mismo directorio que este script.
 """
 
 import os
+import shutil
 import subprocess
 import threading
-import shutil
+import time
 import tkinter as tk
-from tkinterdnd2 import TkinterDnD, DND_FILES
+from tkinter import filedialog, messagebox, ttk
+from tkinterdnd2 import DND_FILES, TkinterDnD
+
 from PIL import Image, ImageTk
 
 # ─── Paleta de colores (oscuro, como la captura) ────────────────────────────
@@ -24,6 +27,11 @@ BTN      = "#4a4a4a"   # fondo de botones
 
 # Clase principal
 class App(TkinterDnD.Tk):
+    MAX_INPUT_FILES = 600
+    LOCAL_POWER_WATTS = 250.0
+    ELECTRICITY_RATE_USD_PER_KWH = 0.20
+    AWS_HOURLY_RATE_USD = 0.35
+    WORKING_HOURS_PER_YEAR = 8 * 5 * 52
 
     def __init__(self):
         super().__init__()
@@ -35,6 +43,16 @@ class App(TkinterDnD.Tk):
 
         # Estado
         self.images: list[str] = []   # rutas absolutas de los archivos .bmp
+        self.input_dir = ""
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        self.output_dir = os.path.join(script_dir, "img")
+        self.machine_hosts: list[tuple[str, int]] = []
+        self.last_throughput_bps = None
+        self.current_total_bytes = 0
+        self._progress_after_id = None
+        self._run_started_at = None
+        self._estimated_total_seconds = None
+        self._run_in_progress = False
 
         # Variables de los checkboxes
         self.var_vg = tk.BooleanVar()
@@ -50,13 +68,24 @@ class App(TkinterDnD.Tk):
 
         # Variables de salida
         self.tiempo_var = tk.StringVar()
-        self.ruta_var   = tk.StringVar()
+        self.input_var = tk.StringVar(value="Ninguna Carpeta Seleccionada")
+        self.output_var = tk.StringVar(value=self.output_dir)
+        self.eta_var = tk.StringVar(value="ETA: --:--:--")
+        self.bps_var = tk.StringVar(value="0.00e+00 B/s")
+        self.cost_local_var = tk.StringVar(value="$0.00 / año")
+        self.cost_aws_var = tk.StringVar(value="$0.00 / año")
+        self.cost_diff_var = tk.StringVar(value="$0.00 / año")
+        self.cluster_var = tk.StringVar(value="")
+        self.workload_var = tk.StringVar(value="0 archivos | 0 B")
+        self.total_var = tk.StringVar(value="0.0 %")
+        self.progress_var = tk.DoubleVar(value=0.0)
 
         # Cargar logo del Tec (se guarda en self para que tkinter no lo elimine)
         self.logo_img = self._load_logo(size=60)
 
         self._build_menu()
         self._build_ui()
+        self._refresh_machinefile_view()
 
     # Carga el logo redimensionado
     def _load_logo(self, size=60):
@@ -84,6 +113,225 @@ class App(TkinterDnD.Tk):
             return total if total > 0 else 1
         except Exception:
             return 1
+
+    def _machinefile_hosts(self, machinefile_path: str) -> list[tuple[str, int]]:
+        hosts: list[tuple[str, int]] = []
+        try:
+            with open(machinefile_path, "r", encoding="utf-8") as handle:
+                for raw_line in handle:
+                    line = raw_line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+
+                    parts = line.split()
+                    host = parts[0]
+                    slots = 1
+                    for token in parts[1:]:
+                        if token.startswith("slots="):
+                            try:
+                                slots = int(token.split("=", 1)[1])
+                            except ValueError:
+                                slots = 1
+                            break
+                    hosts.append((host, max(1, slots)))
+        except Exception:
+            return []
+        return hosts
+
+    def _format_bytes(self, size: int) -> str:
+        units = ["B", "KB", "MB", "GB", "TB"]
+        value = float(max(0, size))
+        unit_index = 0
+        while value >= 1024.0 and unit_index < len(units) - 1:
+            value /= 1024.0
+            unit_index += 1
+        return f"{value:.2f} {units[unit_index]}"
+
+    def _format_duration(self, seconds: float) -> str:
+        seconds = max(0.0, float(seconds))
+        whole = int(seconds)
+        hours = whole // 3600
+        minutes = (whole % 3600) // 60
+        remaining = whole % 60
+        return f"{hours:02d}:{minutes:02d}:{remaining:02d}"
+
+    def _scientific_bps(self, bytes_per_second: float) -> str:
+        return f"{bytes_per_second:.2e} B/s"
+
+    def _annual_costs(self) -> tuple[float, float, float]:
+        local = (
+            (self.LOCAL_POWER_WATTS / 1000.0)
+            * self.WORKING_HOURS_PER_YEAR
+            * self.ELECTRICITY_RATE_USD_PER_KWH
+        )
+        aws = self.WORKING_HOURS_PER_YEAR * self.AWS_HOURLY_RATE_USD
+        return local, aws, local - aws
+
+    def _selected_total_bytes(self, paths: list[str]) -> int:
+        total = 0
+        for path in paths:
+            try:
+                total += os.path.getsize(path)
+            except OSError:
+                continue
+        return total
+
+    def _refresh_machinefile_view(self):
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        machinefile = os.path.join(script_dir, "machinefile")
+        self.machine_hosts = (
+            self._machinefile_hosts(machinefile) if os.path.exists(machinefile) else []
+        )
+
+        if self.machine_hosts:
+            summary = ", ".join(f"{host} ({slots})" for host, slots in self.machine_hosts)
+        else:
+            summary = "No se encontró machinefile"
+        self.cluster_var.set(summary)
+
+        if hasattr(self, "cluster_listbox"):
+            self.cluster_listbox.delete(0, "end")
+            if self.machine_hosts:
+                for host, slots in self.machine_hosts:
+                    self.cluster_listbox.insert("end", f"{host}  |  {slots} slots")
+            else:
+                self.cluster_listbox.insert("end", "Sin computadoras configuradas")
+
+    def _update_metrics(self, total_bytes: int, elapsed_seconds: float | None = None):
+        if elapsed_seconds and elapsed_seconds > 0:
+            throughput = total_bytes / elapsed_seconds
+            self.last_throughput_bps = throughput
+        else:
+            throughput = self.last_throughput_bps or 0.0
+
+        self.current_total_bytes = total_bytes
+        self.workload_var.set(
+            f"{len(self.images)} archivos | {self._format_bytes(total_bytes)}"
+        )
+        self.bps_var.set(self._scientific_bps(throughput))
+
+        if throughput > 0:
+            estimated_seconds = total_bytes / throughput
+            self._estimated_total_seconds = estimated_seconds
+            self.eta_var.set(f"ETA: {self._format_duration(estimated_seconds)}")
+        elif self._estimated_total_seconds:
+            self.eta_var.set(f"ETA: {self._format_duration(self._estimated_total_seconds)}")
+        else:
+            self.eta_var.set("ETA: --:--:--")
+
+        local_cost, aws_cost, diff = self._annual_costs()
+        self.cost_local_var.set(f"${local_cost:,.2f} / año")
+        self.cost_aws_var.set(f"${aws_cost:,.2f} / año")
+        self.cost_diff_var.set(f"${diff:,.2f} / año")
+
+    def _update_progress_tick(self):
+        if not self._run_in_progress or self._run_started_at is None:
+            return
+
+        if self._estimated_total_seconds and self._estimated_total_seconds > 0:
+            elapsed = time.monotonic() - self._run_started_at
+            percent = min(99.0, (elapsed / self._estimated_total_seconds) * 100.0)
+            remaining = max(0.0, self._estimated_total_seconds - elapsed)
+            self.progress_var.set(percent)
+            self.total_var.set(f"{percent:.1f} %")
+            self.eta_var.set(f"ETA: {self._format_duration(remaining)}")
+        else:
+            self.progress_var.set(50.0)
+            self.total_var.set("50.0 %")
+
+        self._progress_after_id = self.after(500, self._update_progress_tick)
+
+    def _stop_progress_tick(self):
+        if self._progress_after_id is not None:
+            self.after_cancel(self._progress_after_id)
+            self._progress_after_id = None
+
+    def _load_images_from_folder(self, folder: str) -> tuple[list[str], str]:
+        if not folder:
+            return [], "Seleccione una carpeta"
+
+        try:
+            candidates = []
+            for name in sorted(os.listdir(folder)):
+                full_path = os.path.join(folder, name)
+                if os.path.isfile(full_path) and name.lower().endswith(".bmp"):
+                    candidates.append(full_path)
+                if len(candidates) >= self.MAX_INPUT_FILES:
+                    break
+
+            if len(candidates) >= self.MAX_INPUT_FILES:
+                message = f"Carpeta cargada con {self.MAX_INPUT_FILES} archivos máximos"
+            else:
+                message = f"Carpeta cargada con {len(candidates)} archivos"
+            return candidates, message
+        except Exception as exc:
+            return [], f"Error al leer carpeta: {exc}"
+
+    def _apply_images(self, paths: list[str], source_label: str):
+        self.images = paths[: self.MAX_INPUT_FILES]
+        self.listbox.delete(0, "end")
+        for path in self.images:
+            self.listbox.insert("end", os.path.basename(path))
+
+        total_bytes = self._selected_total_bytes(self.images)
+        self.input_var.set(source_label)
+        self.workload_var.set(
+            f"{len(self.images)} archivos | {self._format_bytes(total_bytes)}"
+        )
+        self._update_metrics(total_bytes)
+
+    def _select_folder(self):
+        folder = filedialog.askdirectory(title="Seleccionar carpeta de entrada")
+        if not folder:
+            return
+
+        paths, message = self._load_images_from_folder(folder)
+        if not paths:
+            messagebox.showwarning("Sin archivos BMP", message)
+            return
+
+        if len(paths) >= self.MAX_INPUT_FILES:
+            messagebox.showinfo(
+                "Límite alcanzado",
+                f"Solo se cargarán los primeros {self.MAX_INPUT_FILES} archivos BMP.",
+            )
+
+        self.input_dir = folder
+        self._apply_images(paths, folder)
+
+    def _set_drop_paths(self, raw_paths):
+        paths = []
+        for path in raw_paths:
+            path = path.strip()
+            if not path:
+                continue
+
+            if os.path.isdir(path):
+                folder_paths, _ = self._load_images_from_folder(path)
+                for folder_path in folder_paths:
+                    if folder_path not in paths:
+                        paths.append(folder_path)
+                continue
+
+            if path.lower().endswith(".bmp") and os.path.isfile(path):
+                if path not in paths:
+                    paths.append(path)
+
+        if not paths:
+            return
+
+        if len(paths) > self.MAX_INPUT_FILES:
+            paths = paths[: self.MAX_INPUT_FILES]
+        source_label = os.path.dirname(paths[0]) if paths else ""
+        self._apply_images(paths, source_label)
+
+    def _set_run_state(self, running: bool):
+        self._run_in_progress = running
+        self.exec_btn.config(
+            state="disabled" if running else "normal",
+            text="  Procesando...  " if running else "  Ejecutar  ",
+        )
+        self.select_folder_btn.config(state="disabled" if running else "normal")
 
     # Barra de menú nativa de macOS
     def _build_menu(self):
@@ -200,7 +448,7 @@ class App(TkinterDnD.Tk):
 
         hint = tk.Label(
             frame,
-            text="Arrastra imágenes\nmáximo 10\n.bmp",
+            text="Arrastra imágenes\no una carpeta\nmáximo 600\n.bmp",
             bg=PANEL, fg=SUBFG,
             font=("Helvetica", 12),
             justify="center",
@@ -315,44 +563,213 @@ class App(TkinterDnD.Tk):
             justify="left",
         ).pack(side="left")
 
-    # Sección inferior: tiempo, ruta, ejecutar
+        folder_row = tk.Frame(frame, bg=BG)
+        folder_row.pack(fill="x", pady=(18, 0))
+
+        self.select_folder_btn = tk.Button(
+            folder_row,
+            text="  Seleccionar carpeta  ",
+            bg=BTN, fg=FG,
+            activebackground="#666",
+            activeforeground=FG,
+            relief="flat",
+            font=("Helvetica", 12),
+            cursor="hand2",
+            command=self._select_folder,
+            padx=6,
+            pady=4,
+        )
+        self.select_folder_btn.pack(side="left")
+
+        tk.Label(
+            folder_row,
+            text="Hasta 600 archivos .bmp",
+            bg=BG,
+            fg=SUBFG,
+            font=("Helvetica", 10),
+        ).pack(side="left", padx=(12, 0))
+
+    # Sección inferior: carpetas, métricas, ejecutar
     def _build_bottom(self, parent):
         bottom = tk.Frame(parent, bg=BG)
         bottom.pack(fill="x", pady=(14, 0))
 
         # Izquierda: campos de información
         info = tk.Frame(bottom, bg=BG)
-        info.pack(side="left", fill="x", expand=True)
+        info.pack(side="left", fill="both", expand=True)
 
-        tk.Label(info, text="Tiempo de ejecución",
+        top_info = tk.Frame(info, bg=BG)
+        top_info.pack(fill="x")
+
+        left_info = tk.Frame(top_info, bg=BG)
+        left_info.pack(side="left", fill="both", expand=True)
+        tk.Label(left_info, text="Carpeta de entrada",
                  bg=BG, fg=FG, font=("Helvetica", 11)).pack(anchor="w")
         tk.Entry(
-            info,
+            left_info,
+            textvariable=self.input_var,
+            width=40,
+            bg=FIELD, fg=FG,
+            relief="flat",
+            font=("Helvetica", 10),
+            state="readonly",
+            readonlybackground=FIELD,
+        ).pack(anchor="w", pady=(3, 8), fill="x")
+
+        right_info = tk.Frame(top_info, bg=BG)
+        right_info.pack(side="left", fill="both", expand=True, padx=(10, 0))
+        tk.Label(right_info, text="Carpeta de salida",
+                 bg=BG, fg=FG, font=("Helvetica", 11)).pack(anchor="w")
+        tk.Entry(
+            right_info,
+            textvariable=self.output_var,
+            width=40,
+            bg=FIELD, fg=FG,
+            relief="flat",
+            font=("Helvetica", 10),
+            state="readonly",
+            readonlybackground=FIELD,
+        ).pack(anchor="w", pady=(3, 8), fill="x")
+
+        second_info = tk.Frame(info, bg=BG)
+        second_info.pack(fill="x")
+
+        left_second = tk.Frame(second_info, bg=BG)
+        left_second.pack(side="left", fill="both", expand=True)
+        tk.Label(left_second, text="Tiempo de ejecución",
+                 bg=BG, fg=FG, font=("Helvetica", 11)).pack(anchor="w")
+        tk.Entry(
+            left_second,
             textvariable=self.tiempo_var,
-            width=28,
+            width=40,
             bg=FIELD, fg=FG,
             relief="flat",
-            font=("Helvetica", 11),
+            font=("Helvetica", 10),
             state="readonly",
             readonlybackground=FIELD,
-        ).pack(anchor="w", pady=(3, 10))
+        ).pack(anchor="w", pady=(3, 8), fill="x")
 
-        tk.Label(info, text="Ruta de archivos",
+        right_second = tk.Frame(second_info, bg=BG)
+        right_second.pack(side="left", fill="both", expand=True, padx=(10, 0))
+        tk.Label(right_second, text="Carga total",
                  bg=BG, fg=FG, font=("Helvetica", 11)).pack(anchor="w")
         tk.Entry(
-            info,
-            textvariable=self.ruta_var,
-            width=28,
+            right_second,
+            textvariable=self.workload_var,
+            width=40,
             bg=FIELD, fg=FG,
             relief="flat",
-            font=("Helvetica", 11),
+            font=("Helvetica", 10),
             state="readonly",
             readonlybackground=FIELD,
-        ).pack(anchor="w", pady=(3, 0))
+        ).pack(anchor="w", pady=(3, 8), fill="x")
 
-        # Derecha: botón ejecutar + logo
+        third_info = tk.Frame(info, bg=BG)
+        third_info.pack(fill="x")
+
+        left_third = tk.Frame(third_info, bg=BG)
+        left_third.pack(side="left", fill="both", expand=True)
+        tk.Label(left_third, text="Rendimiento (bytes/s)",
+                 bg=BG, fg=FG, font=("Helvetica", 11)).pack(anchor="w")
+        tk.Entry(
+            left_third,
+            textvariable=self.bps_var,
+            width=40,
+            bg=FIELD, fg=FG,
+            relief="flat",
+            font=("Helvetica", 10),
+            state="readonly",
+            readonlybackground=FIELD,
+        ).pack(anchor="w", pady=(3, 8), fill="x")
+
+        right_third = tk.Frame(third_info, bg=BG)
+        right_third.pack(side="left", fill="both", expand=True, padx=(10, 0))
+        tk.Label(right_third, text="Estimación restante",
+                 bg=BG, fg=FG, font=("Helvetica", 11)).pack(anchor="w")
+        ttk.Progressbar(
+            right_third,
+            variable=self.progress_var,
+            maximum=100.0,
+            mode="determinate",
+            length=240,
+        ).pack(anchor="w", pady=(6, 3), fill="x")
+        tk.Label(
+            right_third,
+            textvariable=self.total_var,
+            bg=BG,
+            fg=SUBFG,
+            font=("Helvetica", 10),
+        ).pack(anchor="w")
+
+        fourth_info = tk.Frame(info, bg=BG)
+        fourth_info.pack(fill="x")
+
+        left_fourth = tk.Frame(fourth_info, bg=BG)
+        left_fourth.pack(side="left", fill="both", expand=True)
+        tk.Label(left_fourth, text="Costo anual local",
+                 bg=BG, fg=FG, font=("Helvetica", 11)).pack(anchor="w")
+        tk.Entry(
+            left_fourth,
+            textvariable=self.cost_local_var,
+            width=40,
+            bg=FIELD, fg=FG,
+            relief="flat",
+            font=("Helvetica", 10),
+            state="readonly",
+            readonlybackground=FIELD,
+        ).pack(anchor="w", pady=(3, 8), fill="x")
+
+        right_fourth = tk.Frame(fourth_info, bg=BG)
+        right_fourth.pack(side="left", fill="both", expand=True, padx=(10, 0))
+        tk.Label(right_fourth, text="Costo anual AWS",
+                 bg=BG, fg=FG, font=("Helvetica", 11)).pack(anchor="w")
+        tk.Entry(
+            right_fourth,
+            textvariable=self.cost_aws_var,
+            width=40,
+            bg=FIELD, fg=FG,
+            relief="flat",
+            font=("Helvetica", 10),
+            state="readonly",
+            readonlybackground=FIELD,
+        ).pack(anchor="w", pady=(3, 8), fill="x")
+
+        fifth_info = tk.Frame(info, bg=BG)
+        fifth_info.pack(fill="x")
+
+        left_fifth = tk.Frame(fifth_info, bg=BG)
+        left_fifth.pack(side="left", fill="both", expand=True)
+        tk.Label(left_fifth, text="Diferencia anual",
+                 bg=BG, fg=FG, font=("Helvetica", 11)).pack(anchor="w")
+        tk.Entry(
+            left_fifth,
+            textvariable=self.cost_diff_var,
+            width=40,
+            bg=FIELD, fg=FG,
+            relief="flat",
+            font=("Helvetica", 10),
+            state="readonly",
+            readonlybackground=FIELD,
+        ).pack(anchor="w", pady=(3, 8), fill="x")
+
+        right_fifth = tk.Frame(fifth_info, bg=BG)
+        right_fifth.pack(side="left", fill="both", expand=True, padx=(10, 0))
+        tk.Label(right_fifth, text="Progreso total",
+                 bg=BG, fg=FG, font=("Helvetica", 11)).pack(anchor="w")
+        tk.Entry(
+            right_fifth,
+            textvariable=self.total_var,
+            width=40,
+            bg=FIELD, fg=FG,
+            relief="flat",
+            font=("Helvetica", 10),
+            state="readonly",
+            readonlybackground=FIELD,
+        ).pack(anchor="w", pady=(3, 8), fill="x")
+
+        # Derecha: botón ejecutar + cluster + logo
         right = tk.Frame(bottom, bg=BG)
-        right.pack(side="right", anchor="s")
+        right.pack(side="right", anchor="n", padx=(12, 0))
 
         self.exec_btn = tk.Button(
             right,
@@ -368,6 +785,41 @@ class App(TkinterDnD.Tk):
         )
         self.exec_btn.pack(pady=(0, 10))
 
+        cluster_box = tk.Frame(right, bg=PANEL, width=220, height=160)
+        cluster_box.pack(fill="both", expand=False, pady=(0, 10))
+        cluster_box.pack_propagate(False)
+
+        tk.Label(
+            cluster_box,
+            text="Computadoras del cluster",
+            bg=PANEL,
+            fg=FG,
+            font=("Helvetica", 10, "bold"),
+        ).pack(anchor="w", padx=8, pady=(8, 2))
+        tk.Label(
+            cluster_box,
+            textvariable=self.cluster_var,
+            bg=PANEL,
+            fg=SUBFG,
+            font=("Helvetica", 8),
+            wraplength=200,
+            justify="left",
+        ).pack(anchor="w", padx=8)
+
+        self.cluster_listbox = tk.Listbox(
+            cluster_box,
+            bg=PANEL,
+            fg=FG,
+            selectbackground=ACCENT,
+            selectforeground=FG,
+            font=("Helvetica", 9),
+            relief="flat",
+            bd=0,
+            activestyle="none",
+            height=6,
+        )
+        self.cluster_listbox.pack(fill="both", expand=True, padx=8, pady=(6, 8))
+
         # Logo del Tec (imagen)
         if self.logo_img:
             tk.Label(right, image=self.logo_img, bg=BG).pack()
@@ -380,23 +832,7 @@ class App(TkinterDnD.Tk):
     def _on_drop(self, event):
         # tkinterdnd2 devuelve paths entre llaves si tienen espacios
         raw_paths = self.tk.splitlist(event.data)
-        added = 0
-
-        for path in raw_paths:
-            path = path.strip()
-            if not path.lower().endswith(".bmp"):
-                continue
-            if path in self.images:
-                continue
-            if len(self.images) >= 10:
-                break
-            self.images.append(path)
-            self.listbox.insert("end", os.path.basename(path))
-            added += 1
-
-        if added:
-            self.ruta_var.set("")
-            self.tiempo_var.set("")
+        self._set_drop_paths(raw_paths)
 
     def _remove_file(self, event):
         sel = self.listbox.curselection()
@@ -404,6 +840,8 @@ class App(TkinterDnD.Tk):
             idx = sel[0]
             self.listbox.delete(idx)
             self.images.pop(idx)
+            total_bytes = self._selected_total_bytes(self.images)
+            self._update_metrics(total_bytes)
 
     # Seleccionar todas
     def _select_all(self):
@@ -435,10 +873,27 @@ class App(TkinterDnD.Tk):
         except ValueError:
             k_dc = 16
 
+        if not self.images:
+            self.tiempo_var.set("⚠ Selecciona una carpeta o arrastra archivos .bmp")
+            return
+
+        total_bytes = self._selected_total_bytes(self.images)
+        self._update_metrics(total_bytes)
+        if self.last_throughput_bps and self.last_throughput_bps > 0:
+            self._estimated_total_seconds = total_bytes / self.last_throughput_bps
+        elif total_bytes > 0:
+            self._estimated_total_seconds = max(1.0, total_bytes / (8.0 * 1024.0 * 1024.0))
+        else:
+            self._estimated_total_seconds = None
+
         # Deshabilitar botón mientras procesa
-        self.exec_btn.config(state="disabled", text="  Procesando...  ")
+        self._set_run_state(True)
         self.tiempo_var.set("Procesando…")
-        self.ruta_var.set("" if self.images else "img_to_process")
+        self.total_var.set("0.0 %")
+        self.progress_var.set(0.0)
+        self._run_started_at = time.monotonic()
+        self._stop_progress_tick()
+        self._update_progress_tick()
 
         # Ejecuta el procesamiento en segundo plano para no bloquear la GUI.
         threading.Thread(
@@ -450,7 +905,7 @@ class App(TkinterDnD.Tk):
     def _run(self, selected: list, k_dg: int, k_dc: int):
         script_dir = os.path.dirname(os.path.abspath(__file__))
         executable = os.path.join(script_dir, "execute.sh")
-        img_dir    = os.path.join(script_dir, "img")
+        img_dir    = self.output_dir
         machinefile = os.path.join(script_dir, "machinefile")
 
         # Crear carpeta de salida si no existe
@@ -498,6 +953,8 @@ class App(TkinterDnD.Tk):
                 if line.startswith("TIEMPO:"):
                     t = float(line.split(":")[1])
                     tiempo = f"{t:.4f} s"
+                    if t > 0 and self.current_total_bytes > 0:
+                        self.last_throughput_bps = self.current_total_bytes / t
 
             # Volver al hilo principal para actualizar la UI
             self.after(0, self._on_done, tiempo, img_dir)
@@ -513,14 +970,26 @@ class App(TkinterDnD.Tk):
             self.after(0, self._on_error, str(e))
 
     def _on_done(self, tiempo: str, img_dir: str):
+        self._stop_progress_tick()
+        self._run_in_progress = False
         self.tiempo_var.set(tiempo)
-        self.ruta_var.set(img_dir)
-        self.exec_btn.config(state="normal", text="  Ejecutar  ")
+        self.output_dir = img_dir
+        self.output_var.set(img_dir)
+        self.progress_var.set(100.0)
+        self.total_var.set("100.0 %")
+        if self.current_total_bytes > 0 and tiempo.endswith(" s"):
+            try:
+                elapsed = float(tiempo.split()[0])
+                self._update_metrics(self.current_total_bytes, elapsed)
+            except ValueError:
+                self._update_metrics(self.current_total_bytes)
+        self._set_run_state(False)
 
     def _on_error(self, msg: str):
+        self._stop_progress_tick()
+        self._run_in_progress = False
         self.tiempo_var.set(f"Error: {msg}")
-        self.ruta_var.set("")
-        self.exec_btn.config(state="normal", text="  Ejecutar  ")
+        self._set_run_state(False)
 
 if __name__ == "__main__":
     app = App()

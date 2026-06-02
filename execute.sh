@@ -2,6 +2,8 @@
 OS=$(uname -s)
 ARCH=$(uname -m)
 
+
+
 if [ "$OS" = "Linux" ]; then
     if [ "$ARCH" = "aarch64" ]; then
         # Run the ARM build of the image processor.
