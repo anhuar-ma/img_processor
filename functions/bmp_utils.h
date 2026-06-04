@@ -5,7 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define BMP_OUTPUT_DIR "/img"
+#define BMP_OUTPUT_DIR "/mirror/img_processor/img"
 
 typedef struct {
   unsigned char  header[54];

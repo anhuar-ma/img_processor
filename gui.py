@@ -32,6 +32,9 @@ class App(TkinterDnD.Tk):
     ELECTRICITY_RATE_USD_PER_KWH = 0.20
     AWS_HOURLY_RATE_USD = 0.35
     WORKING_HOURS_PER_YEAR = 8 * 5 * 52
+    MPI_OOB_IF_INCLUDE = "tailscale0"
+    MPI_BTL_IF_INCLUDE = "tailscale0"
+    MPI_BTL_DISABLE_FAMILY = "6"
 
     def __init__(self):
         super().__init__()
@@ -929,7 +932,18 @@ class App(TkinterDnD.Tk):
                 pass
 
         # Construir comando
-        cmd = [launcher, "-np", str(nprocs)]
+        cmd = [
+            "mpirun",
+            "--prtemca",
+            "oob_tcp_if_include",
+            self.MPI_OOB_IF_INCLUDE,
+            "--mca",
+            "btl_tcp_if_include",
+            self.MPI_BTL_IF_INCLUDE,
+            "--mca",
+            "btl_tcp_disable_family",
+            self.MPI_BTL_DISABLE_FAMILY,
+        ]
         if os.path.exists(machinefile):
             cmd += ["--hostfile", machinefile]
         cmd += [executable] + self.images + ["--transforms"] + selected
@@ -939,13 +953,13 @@ class App(TkinterDnD.Tk):
         if "dc" in selected:
             cmd += ["--kernel-dc", str(k_dc)]
 
+        print(cmd)
         try:
             result = subprocess.run(
                 cmd,
                 cwd=script_dir,
                 capture_output=True,
                 text=True,
-                timeout=600,
             )
 
             tiempo = "—"
@@ -959,8 +973,6 @@ class App(TkinterDnD.Tk):
             # Volver al hilo principal para actualizar la UI
             self.after(0, self._on_done, tiempo, img_dir)
 
-        except subprocess.TimeoutExpired:
-            self.after(0, self._on_error, "Tiempo de espera agotado (>10 min)")
         except FileNotFoundError:
             self.after(0, self._on_error,
                        f"Ejecutable no encontrado: {executable}\n"
