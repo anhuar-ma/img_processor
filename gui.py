@@ -5,10 +5,13 @@ El ejecutable 'imgprocP' debe estar en el mismo directorio que este script.
 """
 
 import os
+import json
+import shlex
 import shutil
 import subprocess
 import threading
 import time
+import sys
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from tkinterdnd2 import DND_FILES, TkinterDnD
@@ -50,6 +53,8 @@ class App(TkinterDnD.Tk):
         script_dir = os.path.dirname(os.path.abspath(__file__))
         self.output_dir = os.path.join(script_dir, "img")
         self.machine_hosts: list[tuple[str, int]] = []
+        self.active_machinefile = ""
+        self.last_log_path = ""
         self.last_throughput_bps = None
         self.current_total_bytes = 0
         self._progress_after_id = None
@@ -199,6 +204,115 @@ class App(TkinterDnD.Tk):
                     self.cluster_listbox.insert("end", f"{host}  |  {slots} slots")
             else:
                 self.cluster_listbox.insert("end", "Sin computadoras configuradas")
+
+    def _set_cluster_hosts(self, hosts: list[tuple[str, int]], summary_prefix: str):
+        self.machine_hosts = hosts
+        if hosts:
+            summary = ", ".join(f"{host} ({slots})" for host, slots in hosts)
+            self.cluster_var.set(f"{summary_prefix}: {summary}")
+            if hasattr(self, "cluster_listbox"):
+                self.cluster_listbox.delete(0, "end")
+                for host, slots in hosts:
+                    self.cluster_listbox.insert("end", f"{host}  |  {slots} slots")
+        else:
+            self.cluster_var.set(f"{summary_prefix}: sin hosts activos")
+            if hasattr(self, "cluster_listbox"):
+                self.cluster_listbox.delete(0, "end")
+                self.cluster_listbox.insert("end", "Sin computadoras activas")
+
+    def _prepare_machinefile(self, script_dir: str) -> tuple[str, list[tuple[str, int]]]:
+        source_machinefile = os.path.join(script_dir, "machinefile_all")
+        filtered_machinefile = os.path.join(script_dir, "machinefile")
+        filter_script = os.path.join(script_dir, "create_machinefile.sh")
+        if not os.path.exists(filter_script):
+            raise FileNotFoundError(f"No existe {filter_script}")
+
+        os.makedirs(os.path.dirname(filtered_machinefile), exist_ok=True)
+
+        result = subprocess.run(
+            ["bash", filter_script, source_machinefile, filtered_machinefile],
+            cwd=script_dir,
+            capture_output=True,
+            text=True,
+        )
+
+        payload = None
+        if result.stdout.strip():
+            try:
+                payload = json.loads(result.stdout.strip().splitlines()[-1])
+            except json.JSONDecodeError as exc:
+                raise RuntimeError(
+                    f"create_machinefile no devolvió JSON válido: {exc}\n{result.stdout}\n{result.stderr}"
+                ) from exc
+
+        if result.returncode != 0:
+            message = payload.get("error") if isinstance(payload, dict) else None
+            if not message:
+                message = (result.stderr or result.stdout or "Error desconocido al filtrar machinefile").strip()
+            raise RuntimeError(message)
+
+        if not isinstance(payload, dict):
+            raise RuntimeError("create_machinefile no devolvió datos estructurados")
+
+        active_hosts_raw = payload.get("active_hosts", [])
+        active_hosts: list[tuple[str, int]] = []
+        for item in active_hosts_raw:
+            host = str(item.get("host", "")).strip()
+            slots = int(item.get("slots", 1)) if host else 0
+            if host:
+                active_hosts.append((host, max(1, slots)))
+
+        if not active_hosts:
+            raise RuntimeError("No hay hosts activos en el machinefile")
+
+        return str(payload.get("output_file", filtered_machinefile)), active_hosts
+
+    def _write_execution_log(
+        self,
+        log_path: str,
+        *,
+        command: list[str],
+        machinefile_source: str,
+        machinefile_active: str,
+        active_hosts: list[tuple[str, int]],
+        selected: list[str],
+        k_dg: int,
+        k_dc: int,
+        result: subprocess.CompletedProcess,
+        started_at: float,
+        finished_at: float,
+    ) -> None:
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        task_lines = [
+            line for line in result.stdout.splitlines()
+            if line.startswith("TASK:") or line.startswith("SUMMARY:")
+        ]
+
+        with open(log_path, "w", encoding="utf-8") as handle:
+            handle.write("MPI image processing log\n")
+            handle.write(f"Started: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(started_at))}\n")
+            handle.write(f"Finished: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(finished_at))}\n")
+            handle.write(f"Elapsed: {finished_at - started_at:.4f} s\n")
+            handle.write(f"Command: {' '.join(shlex.quote(part) for part in command)}\n")
+            handle.write(f"Source machinefile: {machinefile_source}\n")
+            handle.write(f"Active machinefile: {machinefile_active}\n")
+            handle.write(f"Active hosts: {len(active_hosts)}\n")
+            for host, slots in active_hosts:
+                handle.write(f"  - {host} slots={slots}\n")
+            handle.write(f"Transforms: {', '.join(selected)}\n")
+            handle.write(f"Kernel dg: {k_dg}\n")
+            handle.write(f"Kernel dc: {k_dc}\n")
+            handle.write(f"Return code: {result.returncode}\n")
+            handle.write("\n-- Task summary --\n")
+            if task_lines:
+                for line in task_lines:
+                    handle.write(line + "\n")
+            else:
+                handle.write("No task summary lines were emitted.\n")
+            handle.write("\n-- Stdout --\n")
+            handle.write(result.stdout or "")
+            handle.write("\n\n-- Stderr --\n")
+            handle.write(result.stderr or "")
 
     def _update_metrics(self, total_bytes: int, elapsed_seconds: float | None = None):
         if elapsed_seconds and elapsed_seconds > 0:
@@ -920,9 +1034,18 @@ class App(TkinterDnD.Tk):
                        "No se encontró mpirun/mpiexec en el sistema")
             return
 
+        try:
+            active_machinefile, active_hosts = self._prepare_machinefile(script_dir)
+        except Exception as exc:
+            self.after(0, self._on_error, f"No se pudo preparar machinefile: {exc}")
+            return
+
+        self.active_machinefile = active_machinefile
+        self.after(0, self._set_cluster_hosts, active_hosts, "Hosts activos")
+
         nprocs = 1
-        if os.path.exists(machinefile):
-            nprocs = self._machinefile_slots(machinefile)
+        if os.path.exists(active_machinefile):
+            nprocs = self._machinefile_slots(active_machinefile)
 
         env_nprocs = os.environ.get("MPI_NP") or os.environ.get("MPI_PROCS")
         if env_nprocs:
@@ -933,7 +1056,7 @@ class App(TkinterDnD.Tk):
 
         # Construir comando
         cmd = [
-            "mpirun",
+            launcher,
             "--prtemca",
             "oob_tcp_if_include",
             self.MPI_OOB_IF_INCLUDE,
@@ -944,8 +1067,8 @@ class App(TkinterDnD.Tk):
             "btl_tcp_disable_family",
             self.MPI_BTL_DISABLE_FAMILY,
         ]
-        if os.path.exists(machinefile):
-            cmd += ["--hostfile", machinefile]
+        if os.path.exists(active_machinefile):
+            cmd += ["--hostfile", active_machinefile]
         cmd += [executable] + self.images + ["--transforms"] + selected
 
         if "dg" in selected:
@@ -954,6 +1077,7 @@ class App(TkinterDnD.Tk):
             cmd += ["--kernel-dc", str(k_dc)]
 
         print(cmd)
+        started_at = time.time()
         try:
             result = subprocess.run(
                 cmd,
@@ -961,17 +1085,38 @@ class App(TkinterDnD.Tk):
                 capture_output=True,
                 text=True,
             )
+            finished_at = time.time()
+
+            log_path = ""
+            for line in result.stdout.splitlines():
+                if line.startswith("LOG_FILE:"):
+                    rel_log_path = line.split(":", 1)[1].strip()
+                    log_path = os.path.abspath(os.path.join(script_dir, rel_log_path))
+                    break
+
+            if not log_path:
+                log_path = os.path.join(
+                    script_dir,
+                    "logs",
+                    time.strftime("run_%Y%m%d_%H%M%S.log", time.localtime(finished_at)),
+                )
+            self.last_log_path = log_path
 
             tiempo = "—"
             for line in result.stdout.splitlines():
                 if line.startswith("TIEMPO:"):
-                    t = float(line.split(":")[1])
+                    t = float(line.split(":", 1)[1])
                     tiempo = f"{t:.4f} s"
                     if t > 0 and self.current_total_bytes > 0:
                         self.last_throughput_bps = self.current_total_bytes / t
 
+            if result.returncode != 0:
+                self.after(0, self._on_error,
+                           f"mpirun terminó con código {result.returncode}. Revisa {log_path}")
+                return
+
             # Volver al hilo principal para actualizar la UI
-            self.after(0, self._on_done, tiempo, img_dir)
+            self.after(0, self._on_done, tiempo, img_dir, log_path)
 
         except FileNotFoundError:
             self.after(0, self._on_error,
@@ -981,12 +1126,13 @@ class App(TkinterDnD.Tk):
         except Exception as e:
             self.after(0, self._on_error, str(e))
 
-    def _on_done(self, tiempo: str, img_dir: str):
+    def _on_done(self, tiempo: str, img_dir: str, log_path: str):
         self._stop_progress_tick()
         self._run_in_progress = False
         self.tiempo_var.set(tiempo)
         self.output_dir = img_dir
         self.output_var.set(img_dir)
+        self.last_log_path = log_path
         self.progress_var.set(100.0)
         self.total_var.set("100.0 %")
         if self.current_total_bytes > 0 and tiempo.endswith(" s"):
