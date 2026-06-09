@@ -167,12 +167,8 @@ class App(TkinterDnD.Tk):
         return f"{bytes_per_second:.2e} B/s"
 
     def _annual_costs(self) -> tuple[float, float, float]:
-        local = (
-            (self.LOCAL_POWER_WATTS / 1000.0)
-            * self.WORKING_HOURS_PER_YEAR
-            * self.ELECTRICITY_RATE_USD_PER_KWH
-        )
-        aws = self.WORKING_HOURS_PER_YEAR * self.AWS_HOURLY_RATE_USD
+        local = 30313
+        aws = 77246
         return local, aws, local - aws
 
     def _selected_total_bytes(self, paths: list[str]) -> int:
@@ -861,21 +857,6 @@ class App(TkinterDnD.Tk):
         tk.Entry(
             left_fifth,
             textvariable=self.cost_diff_var,
-            width=40,
-            bg=FIELD, fg=FG,
-            relief="flat",
-            font=("Helvetica", 10),
-            state="readonly",
-            readonlybackground=FIELD,
-        ).pack(anchor="w", pady=(3, 8), fill="x")
-
-        right_fifth = tk.Frame(fifth_info, bg=BG)
-        right_fifth.pack(side="left", fill="both", expand=True, padx=(10, 0))
-        tk.Label(right_fifth, text="Progreso total",
-                 bg=BG, fg=FG, font=("Helvetica", 11)).pack(anchor="w")
-        tk.Entry(
-            right_fifth,
-            textvariable=self.total_var,
             width=40,
             bg=FIELD, fg=FG,
             relief="flat",

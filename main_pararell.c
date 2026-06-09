@@ -368,8 +368,8 @@ static void write_execution_log(time_t             started_time,
     fprintf(log_file, "No task summary lines were emitted.\n");
   }
 
-  fprintf(log_file, "\n-- Stdout --\n");
-  fprintf(log_file, "%s", stdout_buffer);
+  // fprintf(log_file, "\n-- Stdout --\n");
+  // fprintf(log_file, "%s", stdout_buffer);
 
   fprintf(log_file, "\n\n-- Stderr --\n");
   fprintf(log_file, "%s", stderr_buffer);
@@ -719,7 +719,21 @@ int main(int argc, char *argv[]) {
 
   } else if (world_rank == 0) {
     /* ─── maestro: despacha tareas bajo demanda ─── */
-    int           next   = 0;
+    int next = 0;
+
+    // El maestro pre-llena su propio nombre de host.
+    char processor_name[MPI_MAX_PROCESSOR_NAME];
+    int  processor_len = 0;
+    MPI_Get_processor_name(processor_name, &processor_len);
+    if (processor_len > 0) {
+      if (processor_len >= 64)
+        processor_name[63] = '\0';
+      else
+        processor_name[processor_len] = '\0';
+      strncpy(rank_hosts[0], processor_name, 63);
+      rank_hosts[0][63] = '\0';
+    }
+
     int           active = world_size - 1;
     int           msg[4];
     MPI_Status    st;
@@ -734,11 +748,16 @@ int main(int argc, char *argv[]) {
                MPI_COMM_WORLD,
                &st);
 
+      // Siempre registrar el nombre de host del trabajador, incluso en su
+      // primera solicitud.
+      if (report.rank >= 0 && report.rank < world_size) {
+        strncpy(rank_hosts[report.rank], report.host, 63);
+        rank_hosts[report.rank][63] = '\0';
+      }
+
       if (report.completed_task_id > 0) {
         if (report.rank >= 0 && report.rank < world_size) {
           rank_task_counts[report.rank]++;
-          strncpy(rank_hosts[report.rank], report.host, 63);
-          rank_hosts[report.rank][63] = '\0';
         }
         int task_idx = report.completed_task_id - 1;
         if (task_idx >= 0 && task_idx < task_count) {
@@ -844,15 +863,17 @@ int main(int argc, char *argv[]) {
       log_stderr_printf(
         "Aviso: --threads se ignora con MPI; use mpirun -np %d.\n", world_size);
     }
+
+    time_t finished_time = time(NULL);
+    double total_end     = MPI_Wtime();
+
     log_printf("SUMMARY:tasks=%d ranks=%d images=%d\n",
                task_count,
                world_size,
                image_count);
-    log_printf("TIEMPO:%.4f\n", max_elapsed);
+    log_printf("TIEMPO:%.4f\n", total_end - total_start);
     log_printf("THREADS:%d\n", world_size);
 
-    time_t finished_time = time(NULL);
-    double total_end     = MPI_Wtime();
     write_execution_log(started_time,
                         finished_time,
                         total_end - total_start,
