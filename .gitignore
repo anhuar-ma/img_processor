@@ -7,4 +7,5 @@ img/*
 # Avoid using a imgprocP compile in another operating system
 imgprocP
 img_to_process
+img_to_process_200
 img_processor.wiki

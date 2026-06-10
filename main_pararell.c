@@ -2,10 +2,7 @@
  * main_pararell.c
  * Procesador de imágenes BMP con paralelismo distribuido por MPI.
  *
- * Uso:
- *   mpirun -np <procesos> [--hostfile machinefile] ./imgprocP \
- *     <img1.bmp> [img2.bmp ...] --transforms <vg|vc|hg|hc|dg|dc> [...] \
- *     [--kernel-dg N] [--kernel-dc N]
+ * Implementa un modelo Maestro/Trabajador con despacho dinámico de tareas.
  *
  * Acrónimos de transformación:
  *   vg  -> inversión vertical escala de grises
@@ -36,7 +33,7 @@
 #define MAX_IMAGES 600
 #define MAX_TASKS (MAX_IMAGES * 6)
 
-/* ─── Buffers para Stdout y Stderr para el archivo de log ─── */
+/* Buffers globales para capturar la salida y guardarla en el log final */
 static char   stdout_buffer[65536] = "";
 static size_t stdout_buffer_len    = 0;
 
@@ -91,7 +88,7 @@ static void log_stderr_printf(const char *format, ...) {
   }
 }
 
-/* ─── Estructura de reporte del trabajador ─── */
+/* Estructura para la comunicación de estado desde el trabajador al maestro */
 typedef struct __attribute__((packed)) {
   int    rank;
   int    completed_task_id; // ID de tarea (1-based), 0 si es el primer request
@@ -99,15 +96,16 @@ typedef struct __attribute__((packed)) {
   char   host[64];
 } worker_report;
 
-/* ─── Estructuras para parseo de hosts ─── */
 typedef struct {
   char host[128];
   int  slots;
 } host_info;
 
+/* Almacenamiento temporal para metadatos del cluster */
 static host_info active_hosts[100];
 static int       active_hosts_count = 0;
 
+/* Lee el machinefile para identificar nodos y slots disponibles */
 static void parse_machinefile(const char *path) {
   FILE *f = fopen(path, "r");
   if (!f) {
@@ -164,10 +162,10 @@ static void parse_machinefile(const char *path) {
   fclose(f);
 }
 
-/* ─── flags de transformación (globales de solo lectura en runtime) ─── */
 static int do_vg = 0, do_vc = 0, do_hg = 0, do_hc = 0, do_dg = 0, do_dc = 0;
 static int kernel_dg = 16, kernel_dc = 16;
 
+/* Genera un archivo de bitácora detallado con estadísticas de la ejecución */
 static void write_execution_log(time_t             started_time,
                                 time_t             finished_time,
                                 double             elapsed,
@@ -367,10 +365,6 @@ static void write_execution_log(time_t             started_time,
   if (!summary_emitted) {
     fprintf(log_file, "No task summary lines were emitted.\n");
   }
-
-  // fprintf(log_file, "\n-- Stdout --\n");
-  // fprintf(log_file, "%s", stdout_buffer);
-
   fprintf(log_file, "\n\n-- Stderr --\n");
   fprintf(log_file, "%s", stderr_buffer);
 
@@ -397,6 +391,7 @@ typedef struct {
   int       kernel_size;
 } image_task;
 
+/* Estructura para manejo de rutas de archivos */
 typedef struct {
   char path[512];
 } image_path_entry;
@@ -423,7 +418,7 @@ static const char *task_suffix(task_kind kind) {
   return task_kind_name(kind);
 }
 
-/* ─── carga el encabezado BMP de un archivo ─── */
+/* Carga el encabezado BMP para validar dimensiones y formato */
 static int load_bmp_info(const char *path, bmp_image_info *bmp) {
   FILE *f = fopen(path, "rb");
   if (!f) {
@@ -445,6 +440,7 @@ static int compare_image_paths(const void *lhs, const void *rhs) {
   return strcmp(left->path, right->path);
 }
 
+/* Escanea el directorio por defecto si no se pasan imágenes como argumentos */
 static int load_default_images(const char       *directory,
                                image_path_entry *storage,
                                const char      **images,
@@ -503,6 +499,8 @@ static void abort_with_usage(int rank, const char *message) {
   MPI_Abort(MPI_COMM_WORLD, 1);
 }
 
+/* Selecciona y ejecuta la función de procesamiento correspondiente a la tarea
+ */
 static void run_task(const image_task  *task,
                      const char *const *images,
                      bmp_image_info    *bmps) {
@@ -540,11 +538,13 @@ int main(int argc, char *argv[]) {
   int    world_size   = 1;
   int    world_rank   = 0;
 
+  /* Inicialización del entorno MPI */
   MPI_Init(&argc, &argv);
   double total_start = MPI_Wtime();
   MPI_Comm_size(MPI_COMM_WORLD, &world_size);
   MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
 
+  /* buffers para recolección de estadísticas finales */
   int *rank_task_counts  = calloc(world_size, sizeof(int));
   char (*rank_hosts)[64] = calloc(world_size, 64);
 
@@ -553,13 +553,13 @@ int main(int argc, char *argv[]) {
   int              image_count         = 0;
   int              requested_processes = 0;
 
-  /* ─── Parseo de argumentos ─── */
+  /* Parseo de argumentos de línea de comandos */
   int i = 1;
   while (i < argc) {
 
     if (strcmp(argv[i], "--transforms") == 0) {
       i++;
-      /* consumir todos los códigos hasta el siguiente flag o fin */
+      /* Consumir códigos de transformación (vg, vc, etc.) */
       while (i < argc && argv[i][0] != '-') {
         if (strcmp(argv[i], "vg") == 0)
           do_vg = 1;
@@ -610,7 +610,7 @@ int main(int argc, char *argv[]) {
       "img_to_process", default_image_storage, images, MAX_IMAGES);
   }
 
-  /* ─── Validaciones básicas ─── */
+  /* Validaciones de entrada */
   if (image_count == 0) {
     abort_with_usage(world_rank,
                      "Error: no se proporcionaron imágenes.\n"
@@ -623,7 +623,7 @@ int main(int argc, char *argv[]) {
                      "Error: no se seleccionó ninguna transformación.");
   }
 
-  /* ─── Leer encabezados BMP ─── */
+  /* Carga de metadatos de imágenes en todos los nodos */
   bmp_image_info bmps[MAX_IMAGES];
   memset(bmps, 0, sizeof(bmps));
 
@@ -635,7 +635,7 @@ int main(int argc, char *argv[]) {
     }
   }
 
-  /* ─── Construir lista plana de tareas: una transformación por imagen ─── */
+  /* Construcción de la cola de tareas global */
   static image_task tasks[MAX_TASKS];
   int               task_count = 0;
   for (int img = 0; img < image_count; img++) {
@@ -653,7 +653,8 @@ int main(int argc, char *argv[]) {
       tasks[task_count++] = (image_task){img, TASK_DC, kernel_dc};
   }
 
-  /* ─── Distribución dinámica maestro/trabajador ───
+  /*
+     Distribución dinámica maestro/trabajador:
      El rank 0 reparte tareas bajo demanda: cada trabajador pide una tarea,
      la ejecuta y vuelve a pedir. Los ranks rápidos (ub0) completan más
      tareas que los lentos (ub2) de forma automática, sin pesos fijos.
@@ -663,16 +664,20 @@ int main(int argc, char *argv[]) {
        TAG_WORK     maestro -> trabajador : payload de 3 enteros (tarea)
        TAG_STOP     maestro -> trabajador : "no queda trabajo, termina"
 
-     El payload viaja como int[3] (image_index, kind, kernel_size) para ser
+     El payload viaja como int[4] para ser
      seguro entre arquitecturas (x86_64 <-> aarch64). No se envían píxeles:
      cada rank ya cargó images[] y bmps[] localmente. */
   enum { TAG_REQUEST = 1, TAG_WORK = 2, TAG_STOP = 3 };
 
+  /* Sincronización inicial para que todos los procesos comiencen el timer
+   * juntos */
   MPI_Barrier(MPI_COMM_WORLD);
   const double start = MPI_Wtime();
 
   if (world_size == 1) {
-    /* sin trabajadores: el único proceso ejecuta todo */
+    /*
+       MODO LOCAL:
+       Sin trabajadores adicionales, el único proceso ejecuta toda la cola. */
     char hostname[64] = "localhost";
     char processor_name[MPI_MAX_PROCESSOR_NAME];
     int  processor_len = 0;
@@ -718,10 +723,11 @@ int main(int argc, char *argv[]) {
     }
 
   } else if (world_rank == 0) {
-    /* ─── maestro: despacha tareas bajo demanda ─── */
+    /*
+       MODO MAESTRO:
+       Gestiona la cola de tareas y recolecta reportes de los trabajadores. */
     int next = 0;
 
-    // El maestro pre-llena su propio nombre de host.
     char processor_name[MPI_MAX_PROCESSOR_NAME];
     int  processor_len = 0;
     MPI_Get_processor_name(processor_name, &processor_len);
@@ -748,8 +754,7 @@ int main(int argc, char *argv[]) {
                MPI_COMM_WORLD,
                &st);
 
-      // Siempre registrar el nombre de host del trabajador, incluso en su
-      // primera solicitud.
+      /* Registrar el nombre del host del trabajador para el log final */
       if (report.rank >= 0 && report.rank < world_size) {
         strncpy(rank_hosts[report.rank], report.host, 63);
         rank_hosts[report.rank][63] = '\0';
@@ -806,7 +811,9 @@ int main(int argc, char *argv[]) {
     }
 
   } else {
-    /* ─── trabajador: pide, ejecuta, repite hasta TAG_STOP ─── */
+    /*
+       MODO TRABAJADOR:
+       Ciclo de vida: Solicitar -> Recibir -> Ejecutar -> Reportar. */
     int        msg[4];
     char       processor_name[MPI_MAX_PROCESSOR_NAME];
     int        processor_len = 0;
@@ -827,6 +834,7 @@ int main(int argc, char *argv[]) {
     report.host[sizeof(report.host) - 1] = '\0';
 
     for (;;) {
+      /* Enviar reporte de la tarea anterior (o inicial) y pedir una nueva */
       MPI_Send(&report,
                sizeof(worker_report),
                MPI_BYTE,
@@ -835,11 +843,13 @@ int main(int argc, char *argv[]) {
                MPI_COMM_WORLD);
       MPI_Recv(msg, 4, MPI_INT, 0, MPI_ANY_TAG, MPI_COMM_WORLD, &st);
 
+      /* Si la etiqueta es STOP, salimos del ciclo y terminamos el proceso */
       if (st.MPI_TAG == TAG_STOP)
         break;
 
       image_task   task       = {msg[1], (task_kind)msg[2], msg[3]};
       const double task_start = MPI_Wtime();
+      /* Ejecución local de la transformación */
       run_task(&task, images, bmps);
       const double task_elapsed = MPI_Wtime() - task_start;
 
@@ -848,17 +858,18 @@ int main(int argc, char *argv[]) {
     }
   }
 
+  /* Sincronización final y reducción del tiempo máximo de ejecución */
   const double local_elapsed = MPI_Wtime() - start;
   double       max_elapsed   = 0.0;
   MPI_Reduce(
     &local_elapsed, &max_elapsed, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
 
-  /* ─── Liberar memoria ─── */
+  /* Liberar recursos BMP */
   for (int img = 0; img < image_count; img++)
     bmp_free_info(&bmps[img]);
 
-  /* ─── Salida que la GUI parsea ─── */
   if (world_rank == 0) {
+    /* Finalización del nodo maestro y generación de metadatos */
     if (requested_processes > 0 && requested_processes != world_size) {
       log_stderr_printf(
         "Aviso: --threads se ignora con MPI; use mpirun -np %d.\n", world_size);
@@ -888,6 +899,7 @@ int main(int argc, char *argv[]) {
   free(rank_task_counts);
   free(rank_hosts);
 
+  /* Cierre formal del entorno MPI */
   MPI_Finalize();
 
   return 0;

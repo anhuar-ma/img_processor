@@ -1,9 +1,3 @@
-"""
-Requiere: pip install tkinterdnd2
-Ejecutar:  python gui.py
-El ejecutable 'imgprocP' debe estar en el mismo directorio que este script.
-"""
-
 import os
 import json
 import shlex
@@ -18,19 +12,21 @@ from tkinterdnd2 import DND_FILES, TkinterDnD
 
 from PIL import Image, ImageTk
 
-# ─── Paleta de colores (oscuro, como la captura) ────────────────────────────
-BG       = "#2d2d2d"   # fondo general
-PANEL    = "#1a1a1a"   # panel izquierdo (drop zone)
-ACCENT   = "#4a9eff"   # color de selección
-FG       = "#ffffff"   # texto principal
-SUBFG    = "#888888"   # texto secundario
-FIELD    = "#3c3c3c"   # fondo de campos de entrada
-BTN      = "#4a4a4a"   # fondo de botones
+# Estilo visual del Dashboard 
+BG       = "#2d2d2d"
+PANEL    = "#1a1a1a"
+ACCENT   = "#4a9eff"
+FG       = "#ffffff"
+SUBFG    = "#888888"
+FIELD    = "#3c3c3c"
+BTN      = "#4a4a4a"
 
 
 # Clase principal
 class App(TkinterDnD.Tk):
     MAX_INPUT_FILES = 600
+    
+    #  Configuración para cálculos de costos y red MPI 
     LOCAL_POWER_WATTS = 250.0
     ELECTRICITY_RATE_USD_PER_KWH = 0.20
     AWS_HOURLY_RATE_USD = 0.35
@@ -44,11 +40,11 @@ class App(TkinterDnD.Tk):
 
         self.title("Procesamiento de imágenes")
         self.configure(bg=BG)
-        self.geometry("700x500")  # Ancho x Alto inicial
-        self.resizable(True, True)  # Permitir redimensionamiento
+        self.geometry("700x500")
+        self.resizable(True, True)
 
-        # Estado
-        self.images: list[str] = []   # rutas absolutas de los archivos .bmp
+        #  Estado interno de la aplicación y métricas 
+        self.images: list[str] = []
         self.input_dir = ""
         script_dir = os.path.dirname(os.path.abspath(__file__))
         self.output_dir = os.path.join(script_dir, "img")
@@ -62,7 +58,6 @@ class App(TkinterDnD.Tk):
         self._estimated_total_seconds = None
         self._run_in_progress = False
 
-        # Variables de los checkboxes
         self.var_vg = tk.BooleanVar()
         self.var_vc = tk.BooleanVar()
         self.var_hg = tk.BooleanVar()
@@ -70,11 +65,9 @@ class App(TkinterDnD.Tk):
         self.var_dg = tk.BooleanVar()
         self.var_dc = tk.BooleanVar()
 
-        # Variables de kernel
         self.kernel_dg = tk.StringVar(value="16")
         self.kernel_dc = tk.StringVar(value="16")
 
-        # Variables de salida
         self.tiempo_var = tk.StringVar()
         self.input_var = tk.StringVar(value="Ninguna Carpeta Seleccionada")
         self.output_var = tk.StringVar(value=self.output_dir)
@@ -88,15 +81,14 @@ class App(TkinterDnD.Tk):
         self.total_var = tk.StringVar(value="0.0 %")
         self.progress_var = tk.DoubleVar(value=0.0)
 
-        # Cargar logo del Tec (se guarda en self para que tkinter no lo elimine)
         self.logo_img = self._load_logo(size=60)
 
         self._build_menu()
         self._build_ui()
         self._refresh_machinefile_view()
 
-    # Carga el logo redimensionado
     def _load_logo(self, size=60):
+        """Carga y redimensiona el logo institucional."""
         script_dir = os.path.dirname(os.path.abspath(__file__))
         logo_path  = os.path.join(script_dir, "./assets/logos/tec_logo.png")
         try:
@@ -104,7 +96,7 @@ class App(TkinterDnD.Tk):
             img = img.resize((size, size), Image.LANCZOS)
             return ImageTk.PhotoImage(img)
         except Exception:
-            return None   # si no encuentra el archivo, no muestra nada
+            return None
 
     def _machinefile_slots(self, machinefile_path: str) -> int:
         try:
@@ -167,6 +159,7 @@ class App(TkinterDnD.Tk):
         return f"{bytes_per_second:.2e} B/s"
 
     def _annual_costs(self) -> tuple[float, float, float]:
+        #  Valores fijos para la comparativa económica 
         local = 30313
         aws = 77246
         return local, aws, local - aws
@@ -217,6 +210,7 @@ class App(TkinterDnD.Tk):
                 self.cluster_listbox.insert("end", "Sin computadoras activas")
 
     def _prepare_machinefile(self, script_dir: str) -> tuple[str, list[tuple[str, int]]]:
+        """Invoca el script bash para filtrar nodos inactivos antes de la ejecución."""
         source_machinefile = os.path.join(script_dir, "machinefile_all")
         filtered_machinefile = os.path.join(script_dir, "machinefile")
         filter_script = os.path.join(script_dir, "create_machinefile.sh")
@@ -311,6 +305,7 @@ class App(TkinterDnD.Tk):
             handle.write(result.stderr or "")
 
     def _update_metrics(self, total_bytes: int, elapsed_seconds: float | None = None):
+        """Calcula el rendimiento (B/s) y actualiza los paneles de costo."""
         if elapsed_seconds and elapsed_seconds > 0:
             throughput = total_bytes / elapsed_seconds
             self.last_throughput_bps = throughput
@@ -338,6 +333,10 @@ class App(TkinterDnD.Tk):
         self.cost_diff_var.set(f"${diff:,.2f} / año")
 
     def _update_progress_tick(self):
+        """
+        Bucle de animación de la barra de progreso. 
+        Utiliza la estimación de tiempo calculada al inicio para simular el avance.
+        """
         if not self._run_in_progress or self._run_started_at is None:
             return
 
@@ -355,6 +354,7 @@ class App(TkinterDnD.Tk):
         self._progress_after_id = self.after(500, self._update_progress_tick)
 
     def _stop_progress_tick(self):
+        """Detiene el bucle de animación."""
         if self._progress_after_id is not None:
             self.after_cancel(self._progress_after_id)
             self._progress_after_id = None
@@ -381,6 +381,7 @@ class App(TkinterDnD.Tk):
             return [], f"Error al leer carpeta: {exc}"
 
     def _apply_images(self, paths: list[str], source_label: str):
+        """Actualiza el estado interno cuando se cargan nuevas imágenes."""
         self.images = paths[: self.MAX_INPUT_FILES]
         self.listbox.delete(0, "end")
         for path in self.images:
@@ -439,6 +440,7 @@ class App(TkinterDnD.Tk):
         self._apply_images(paths, source_label)
 
     def _set_run_state(self, running: bool):
+        """Bloquea o desbloquea la UI dependiendo de si hay un proceso activo."""
         self._run_in_progress = running
         self.exec_btn.config(
             state="disabled" if running else "normal",
@@ -446,11 +448,9 @@ class App(TkinterDnD.Tk):
         )
         self.select_folder_btn.config(state="disabled" if running else "normal")
 
-    # Barra de menú nativa de macOS
     def _build_menu(self):
         menubar = tk.Menu(self)
 
-        # Menú "Menu" visible en la barra de macOS
         app_menu = tk.Menu(menubar, tearoff=0)
         app_menu.add_command(label="Acerca de", command=self._show_about)
         app_menu.add_separator()
@@ -459,14 +459,13 @@ class App(TkinterDnD.Tk):
         menubar.add_cascade(label="Menu", menu=app_menu)
         self.config(menu=menubar)
 
-    # Ventana "Acerca de"
     def _show_about(self):
+        """Muestra la ventana con los créditos del proyecto."""
         win = tk.Toplevel(self)
         win.title("Acerca de")
         win.configure(bg=BG)
         win.resizable(False, False)
 
-        # Centrar relativo a la ventana principal
         self.update_idletasks()
         x = self.winfo_x() + self.winfo_width()  + 20
         y = self.winfo_y() + 60
@@ -475,7 +474,6 @@ class App(TkinterDnD.Tk):
         frame = tk.Frame(win, bg=BG, padx=24, pady=24)
         frame.pack(fill="both", expand=True)
 
-        # Información del proyecto
         info_lines = [
             ("TC3003",                   True),
             ("Tecnológico de Monterrey", False),
@@ -535,26 +533,23 @@ class App(TkinterDnD.Tk):
                      bg=BG, fg=SUBFG, font=("Helvetica", 9, "bold")
                      ).pack(side="right")
 
-    # Construcción de la interfaz
     def _build_ui(self):
+        """Ensambla el layout principal del Dashboard."""
         root = tk.Frame(self, bg=BG, padx=18, pady=18)
         root.pack(fill="both", expand=True)
 
-        # Fila superior: panel izquierdo + controles derecha
         top = tk.Frame(root, bg=BG)
         top.pack(fill="both", expand=True)
 
         self._build_drop_panel(top)
         self._build_controls(top)
 
-        # Separador
         tk.Frame(root, bg="#444444", height=1).pack(fill="x", pady=(14, 0))
 
-        # Fila inferior: tiempo, ruta, botón
         self._build_bottom(root)
 
-    # Panel de arrastre (izquierda)
     def _build_drop_panel(self, parent):
+        """Construye la zona de Drop de archivos a la izquierda."""
         frame = tk.Frame(parent, bg=PANEL, width=265, height=310)
         frame.pack(side="left", fill="y", padx=(0, 18))
         frame.pack_propagate(False)
@@ -568,7 +563,6 @@ class App(TkinterDnD.Tk):
         )
         hint.pack(pady=(16, 6))
 
-        # Lista de archivos cargados
         self.listbox = tk.Listbox(
             frame,
             bg=PANEL, fg=FG,
@@ -581,7 +575,6 @@ class App(TkinterDnD.Tk):
         )
         self.listbox.pack(fill="both", expand=True, padx=8, pady=(0, 8))
 
-        # Instrucción de eliminación
         tk.Label(
             frame,
             text="Clic derecho para quitar archivo",
@@ -589,17 +582,15 @@ class App(TkinterDnD.Tk):
             font=("Helvetica", 8),
         ).pack(pady=(0, 6))
 
-        # Clic derecho elimina el elemento seleccionado
         self.listbox.bind("<Button-2>", self._remove_file)   # macOS
         self.listbox.bind("<Button-3>", self._remove_file)   # Windows/Linux
 
-        # Registrar drag-and-drop en todo el panel y sus hijos
         for widget in (frame, hint, self.listbox):
             widget.drop_target_register(DND_FILES)
             widget.dnd_bind("<<Drop>>", self._on_drop)
 
-    # Panel de controles (derecha)
     def _build_controls(self, parent):
+        """Construye los selectores de transformaciones y kernels."""
         frame = tk.Frame(parent, bg=BG)
         frame.pack(side="left", fill="both", expand=True)
 
@@ -648,7 +639,6 @@ class App(TkinterDnD.Tk):
                     font=("Helvetica", 12),
                 ).pack(side="left")
 
-        # Botón "Todas"
         spacer = tk.Frame(frame, bg=BG, height=10)
         spacer.pack()
 
@@ -702,12 +692,11 @@ class App(TkinterDnD.Tk):
             font=("Helvetica", 10),
         ).pack(side="left", padx=(12, 0))
 
-    # Sección inferior: carpetas, métricas, ejecutar
     def _build_bottom(self, parent):
+        """Construye el panel de métricas, costos y el botón Ejecutar."""
         bottom = tk.Frame(parent, bg=BG)
         bottom.pack(fill="x", pady=(14, 0))
 
-        # Izquierda: campos de información
         info = tk.Frame(bottom, bg=BG)
         info.pack(side="left", fill="both", expand=True)
 
@@ -865,7 +854,6 @@ class App(TkinterDnD.Tk):
             readonlybackground=FIELD,
         ).pack(anchor="w", pady=(3, 8), fill="x")
 
-        # Derecha: botón ejecutar + cluster + logo
         right = tk.Frame(bottom, bg=BG)
         right.pack(side="right", anchor="n", padx=(12, 0))
 
@@ -918,7 +906,6 @@ class App(TkinterDnD.Tk):
         )
         self.cluster_listbox.pack(fill="both", expand=True, padx=8, pady=(6, 8))
 
-        # Logo del Tec (imagen)
         if self.logo_img:
             tk.Label(right, image=self.logo_img, bg=BG).pack()
         else:
@@ -926,10 +913,7 @@ class App(TkinterDnD.Tk):
                      bg=BG, fg=SUBFG, font=("Helvetica", 8, "bold"),
                      justify="center").pack()
 
-    # Lógica de drag-and-drop
     def _on_drop(self, event):
-        # tkinterdnd2 devuelve paths entre llaves si tienen espacios
-        raw_paths = self.tk.splitlist(event.data)
         self._set_drop_paths(raw_paths)
 
     def _remove_file(self, event):
@@ -941,14 +925,13 @@ class App(TkinterDnD.Tk):
             total_bytes = self._selected_total_bytes(self.images)
             self._update_metrics(total_bytes)
 
-    # Seleccionar todas
     def _select_all(self):
         for var in (self.var_vg, self.var_vc, self.var_hg,
                     self.var_hc, self.var_dg, self.var_dc):
             var.set(True)
 
-    # Ejecutar procesamiento
     def _execute(self):
+        """Valida entradas e inicia el hilo de ejecución de MPI."""
         selected = []
         if self.var_vg.get(): selected.append("vg")
         if self.var_vc.get(): selected.append("vc")
@@ -961,7 +944,6 @@ class App(TkinterDnD.Tk):
             self.tiempo_var.set("⚠ Selecciona al menos una transformación")
             return
 
-        # Kernels
         try:
             k_dg = max(1, int(self.kernel_dg.get()))
         except ValueError:
@@ -975,6 +957,7 @@ class App(TkinterDnD.Tk):
             self.tiempo_var.set("⚠ Selecciona una carpeta o arrastra archivos .bmp")
             return
 
+        #  Inicializa la estimación de tiempo para la barra de progreso 
         total_bytes = self._selected_total_bytes(self.images)
         self._update_metrics(total_bytes)
         if self.last_throughput_bps and self.last_throughput_bps > 0:
@@ -984,7 +967,6 @@ class App(TkinterDnD.Tk):
         else:
             self._estimated_total_seconds = None
 
-        # Deshabilitar botón mientras procesa
         self._set_run_state(True)
         self.tiempo_var.set("Procesando…")
         self.total_var.set("0.0 %")
@@ -993,7 +975,6 @@ class App(TkinterDnD.Tk):
         self._stop_progress_tick()
         self._update_progress_tick()
 
-        # Ejecuta el procesamiento en segundo plano para no bloquear la GUI.
         threading.Thread(
             target=self._run,
             args=(selected, k_dg, k_dc),
@@ -1001,12 +982,14 @@ class App(TkinterDnD.Tk):
         ).start()
 
     def _run(self, selected: list, k_dg: int, k_dc: int):
+        """
+        Método ejecutado en el hilo secundario. 
+        Prepara el clúster, lanza mpirun y captura la salida.
+        """
         script_dir = os.path.dirname(os.path.abspath(__file__))
         executable = os.path.join(script_dir, "execute.sh")
         img_dir    = self.output_dir
         machinefile = os.path.join(script_dir, "machinefile")
-
-        # Crear carpeta de salida si no existe
         os.makedirs(img_dir, exist_ok=True)
 
         launcher = shutil.which("mpirun") or shutil.which("mpiexec")
@@ -1035,7 +1018,6 @@ class App(TkinterDnD.Tk):
             except ValueError:
                 pass
 
-        # Construir comando
         cmd = [
             launcher,
             "--prtemca",
@@ -1096,7 +1078,6 @@ class App(TkinterDnD.Tk):
                            f"mpirun terminó con código {result.returncode}. Revisa {log_path}")
                 return
 
-            # Volver al hilo principal para actualizar la UI
             self.after(0, self._on_done, tiempo, img_dir, log_path)
 
         except FileNotFoundError:
